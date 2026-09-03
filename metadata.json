@@ -1,0 +1,7 @@
+{
+  "name": "Personal AI Team",
+  "description": "個人多 Agent 協作團隊原型，由 Manager Agent 總管統籌分派 Work Agent 與 Study Agent 進行任務拆解與時間規劃",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
