@@ -7,9 +7,38 @@ import { buildPublicRoutingInstruction, classifyPublicRequest } from './server/p
 const originalUse = express.application.use;
 let useCount = 0;
 let mounted = false;
+let corsMounted = false;
 
 express.application.use = function patchedUse(...args: any[]) {
   useCount += 1;
+
+  // GitHub Pages and local development are separate origins from Render.
+  // Keep the API credentials server-side while allowing the browser to call the API.
+  if (!corsMounted) {
+    corsMounted = true;
+    originalUse.call(this, (req: any, res: any, next: any) => {
+      const origin = req.headers.origin as string | undefined;
+      const allowedOrigins = new Set([
+        'https://312460040.github.io',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        process.env.FRONTEND_ORIGIN,
+      ].filter(Boolean) as string[]);
+
+      if (origin && allowedOrigins.has(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Owner-Id, Authorization');
+
+      if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+      }
+      next();
+    });
+  }
+
   if (!mounted && useCount >= 2) {
     mounted = true;
     originalUse.call(this, '/api/persistence', persistenceRouter);
