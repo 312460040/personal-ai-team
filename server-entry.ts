@@ -26,7 +26,7 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
   if (path === '/api/agent/chat' && handlers.length) {
     const wrappedHandlers = handlers.map((handler: any) => {
       if (typeof handler !== 'function') return handler;
-      return function publicIntakeHandler(this: any, req: any, res: any, next: any) {
+      return async function publicIntakeHandler(this: any, req: any, res: any, next: any) {
         const context = req.body?.context;
         const room = context?.chatRoom;
         const isPublicRoom =
@@ -39,7 +39,7 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
           return handler.call(this, req, res, next);
         }
 
-        const result = classifyPublicRequest(req.body?.message || '', context?.workProjects || []);
+        const result = await classifyPublicRequest(req.body?.message || '', context?.workProjects || []);
         const routingInstruction = buildPublicRoutingInstruction(result);
 
         req.body.context = {
@@ -49,6 +49,7 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
             confidence: result.confidence,
             reason: result.reason,
             projectId: result.projectId,
+            method: result.method,
             routingInstruction,
           },
           currentContext: {
@@ -61,25 +62,29 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
         };
 
         // Keep the classifier result in the API response so the frontend can
-        // display the Manager's routing decision without needing a second LLM call.
+        // display the Manager's routing decision without needing another LLM call.
         const originalJson = res.json.bind(res);
         res.json = (payload: any) => {
           const routedPayload = { ...payload, publicIntake: req.body.context.publicIntake };
           if (typeof routedPayload.finalSynthesisMarkdown === 'string') {
-            const label = result.category === 'work' ? '工作' : result.category === 'study' ? '課業' : '個人規劃';
+            const label = result.category === 'work' ? '工作' : result.category === 'study' ? '課業／研究' : '個人規劃';
             const projectNote = result.projectId
               ? `\n- 專案：已安全匹配既有專案（${result.projectId}）`
               : result.category === 'work'
                 ? '\n- 專案：尚未指定，Manager 不會自行猜測專案'
                 : '';
             routedPayload.finalSynthesisMarkdown =
-              `### 🧭 Manager 分流\n- 類別：**${label}**\n- 信心：**${result.confidence}**\n- 判斷：${result.reason}${projectNote}\n\n` +
+              `### 🧭 Manager 分流\n- 類別：**${label}**\n- 信心：**${result.confidence}**\n- 判斷方式：**${result.method === 'ai' ? 'AI 語意理解' : '規則備援'}**\n- 判斷：${result.reason}${projectNote}\n\n` +
               routedPayload.finalSynthesisMarkdown;
           }
           return originalJson(routedPayload);
         };
 
-        return handler.call(this, req, res, next);
+        try {
+          return await handler.call(this, req, res, next);
+        } catch (error) {
+          return next(error);
+        }
       };
     });
     return originalPost.call(this, path, ...wrappedHandlers);
