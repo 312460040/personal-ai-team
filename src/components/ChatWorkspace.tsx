@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Plus, MessageSquare, Users, Settings2, Briefcase, GraduationCap, FolderPlus, UserPlus, ChevronRight } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Plus, MessageSquare, Users, Briefcase, FolderPlus, UserPlus, ChevronRight } from 'lucide-react';
 import { AiTeamChat } from './AiTeamChat';
 import type { AgentInfo, ChatMessage, StructuredTimeBlock } from '../types';
 
@@ -10,6 +10,7 @@ type CustomAgent = { id: string; name: string; roleName: string; categoryId: str
 const CATEGORY_KEY = 'ait_chat_categories_v1';
 const ROOM_KEY = 'ait_chat_rooms_v1';
 const CUSTOM_AGENT_KEY = 'ait_custom_agents_v1';
+const roomMessagesKey = (roomId: string) => `ait_chat_messages_v1_${roomId}`;
 
 const defaultCategories: ChatCategory[] = [
   { id: 'work', name: '工作', icon: '💼' },
@@ -32,6 +33,13 @@ const readList = <T,>(key: string, fallback: T[]): T[] => {
   } catch { return fallback; }
 };
 
+const readMessages = (roomId: string, fallback: ChatMessage[]): ChatMessage[] => {
+  try {
+    const saved = localStorage.getItem(roomMessagesKey(roomId));
+    return saved ? JSON.parse(saved) : fallback;
+  } catch { return fallback; }
+};
+
 interface Props {
   messages: ChatMessage[];
   onSendMessage: (text: string) => void;
@@ -47,6 +55,9 @@ export const ChatWorkspace: React.FC<Props> = (props) => {
   const [customAgents, setCustomAgents] = useState(() => readList<CustomAgent>(CUSTOM_AGENT_KEY, []));
   const [selectedRoomId, setSelectedRoomId] = useState('room-work-general');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [roomMessages, setRoomMessages] = useState<ChatMessage[]>(() => readMessages('room-work-general', props.messages));
+  const pendingRoomIdRef = React.useRef<string | null>(null);
+  const seenGlobalMessageIdsRef = React.useRef<Set<string>>(new Set(props.messages.map(m => m.id)));
 
   const selectedRoom = rooms.find(r => r.id === selectedRoomId) || rooms[0];
   const selectedCategory = categories.find(c => c.id === selectedRoom?.categoryId);
@@ -56,7 +67,30 @@ export const ChatWorkspace: React.FC<Props> = (props) => {
     return [...builtIn, ...custom];
   }, [props.agentRegistry, customAgents, selectedRoom]);
 
+  useEffect(() => {
+    localStorage.setItem(roomMessagesKey(selectedRoomId), JSON.stringify(roomMessages));
+  }, [selectedRoomId, roomMessages]);
+
+  useEffect(() => {
+    const unseen = props.messages.filter(m => !seenGlobalMessageIdsRef.current.has(m.id));
+    if (unseen.length === 0) return;
+    unseen.forEach(m => seenGlobalMessageIdsRef.current.add(m.id));
+    const targetRoom = pendingRoomIdRef.current || selectedRoomId;
+    if (targetRoom !== selectedRoomId) return;
+    setRoomMessages(prev => {
+      const existing = new Set(prev.map(m => m.id));
+      const additions = unseen.filter(m => !existing.has(m.id));
+      return additions.length ? [...prev, ...additions] : prev;
+    });
+    pendingRoomIdRef.current = null;
+  }, [props.messages, selectedRoomId]);
+
   const persist = (key: string, value: unknown) => localStorage.setItem(key, JSON.stringify(value));
+
+  const switchRoom = (roomId: string) => {
+    setSelectedRoomId(roomId);
+    setRoomMessages(readMessages(roomId, []));
+  };
 
   const addCategory = () => {
     const name = window.prompt('新增 AI 團隊分類名稱，例如：財務、健康、創作');
@@ -69,7 +103,7 @@ export const ChatWorkspace: React.FC<Props> = (props) => {
     const name = window.prompt('聊天室名稱，例如：A 客戶｜短影音');
     if (!name?.trim()) return;
     const room = { id: `room-${Date.now()}`, categoryId, name: name.trim(), description: '新的專屬工作脈絡', agentIds: ['manager'] };
-    const next = [...rooms, room]; setRooms(next); persist(ROOM_KEY, next); setSelectedRoomId(room.id);
+    const next = [...rooms, room]; setRooms(next); persist(ROOM_KEY, next); switchRoom(room.id);
   };
 
   const addAgent = () => {
@@ -86,12 +120,24 @@ export const ChatWorkspace: React.FC<Props> = (props) => {
     setRooms(next); persist(ROOM_KEY, next);
   };
 
+  const handleSendMessage = (text: string) => {
+    const userMsg: ChatMessage = {
+      id: `room-user-${Date.now()}`,
+      sender: 'user',
+      text,
+      timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }),
+    };
+    setRoomMessages(prev => [...prev, userMsg]);
+    pendingRoomIdRef.current = selectedRoomId;
+    props.onSendMessage(text);
+  };
+
   return (
     <div className="mx-auto max-w-7xl px-2 sm:px-4 py-3 h-[calc(100vh-5rem)] flex gap-3">
       <aside className="hidden md:flex w-64 shrink-0 flex-col rounded-2xl border border-[#E5E2DC] bg-white overflow-hidden">
         <div className="p-3 border-b border-[#EBE8E1]">
           <div className="flex items-center justify-between">
-            <div><div className="text-sm font-bold">AI Team 聊天室</div><div className="text-[10px] text-[#8C938D]">依工作領域管理對話</div></div>
+            <div><div className="text-sm font-bold">AI Team 聊天室</div><div className="text-[10px] text-[#8C938D]">每個聊天室保留獨立對話脈絡</div></div>
             <button onClick={() => addRoom(selectedCategory?.id || 'personal')} className="p-2 rounded-lg hover:bg-[#F3F1ED]" title="新增聊天室"><Plus className="w-4 h-4" /></button>
           </div>
         </div>
@@ -101,40 +147,24 @@ export const ChatWorkspace: React.FC<Props> = (props) => {
             const isCollapsed = collapsed[category.id];
             return <div key={category.id} className="mb-2">
               <div className="flex items-center justify-between px-2 py-1.5">
-                <button onClick={() => setCollapsed(v => ({ ...v, [category.id]: !v[category.id] }))} className="flex items-center gap-2 text-xs font-bold text-[#555D57]">
-                  <span>{category.icon}</span><span>{category.name}</span><ChevronRight className={`w-3 h-3 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
-                </button>
+                <button onClick={() => setCollapsed(v => ({ ...v, [category.id]: !v[category.id] }))} className="flex items-center gap-2 text-xs font-bold text-[#555D57]"><span>{category.icon}</span><span>{category.name}</span><ChevronRight className={`w-3 h-3 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} /></button>
                 <button onClick={() => addRoom(category.id)} className="p-1 rounded hover:bg-[#F3F1ED]" title="新增聊天室"><Plus className="w-3 h-3" /></button>
               </div>
-              {!isCollapsed && categoryRooms.map(room => <button key={room.id} onClick={() => setSelectedRoomId(room.id)} className={`w-full text-left flex items-center gap-2 px-2.5 py-2 rounded-xl mb-0.5 ${selectedRoomId === room.id ? 'bg-[#E8EFEB] text-[#385244]' : 'text-[#555D57] hover:bg-[#F7F5F1]'}`}>
-                <MessageSquare className="w-3.5 h-3.5 shrink-0" /><span className="text-xs truncate">{room.name}</span>
-              </button>)}
+              {!isCollapsed && categoryRooms.map(room => <button key={room.id} onClick={() => switchRoom(room.id)} className={`w-full text-left flex items-center gap-2 px-2.5 py-2 rounded-xl mb-0.5 ${selectedRoomId === room.id ? 'bg-[#E8EFEB] text-[#385244]' : 'text-[#555D57] hover:bg-[#F7F5F1]'}`}><MessageSquare className="w-3.5 h-3.5 shrink-0" /><span className="text-xs truncate">{room.name}</span></button>)}
             </div>;
           })}
           <button onClick={addCategory} className="w-full mt-2 px-2.5 py-2 rounded-xl border border-dashed border-[#D8D4CA] text-xs text-[#737A75] hover:bg-[#F8F7F4] flex items-center gap-2"><FolderPlus className="w-3.5 h-3.5" />新增分類</button>
         </div>
-        <div className="p-2 border-t border-[#EBE8E1]">
-          <button onClick={addAgent} className="w-full px-2.5 py-2 rounded-xl text-xs text-[#555D57] hover:bg-[#F3F1ED] flex items-center gap-2"><UserPlus className="w-3.5 h-3.5" />建立自訂 AI 員工</button>
-        </div>
+        <div className="p-2 border-t border-[#EBE8E1]"><button onClick={addAgent} className="w-full px-2.5 py-2 rounded-xl text-xs text-[#555D57] hover:bg-[#F3F1ED] flex items-center gap-2"><UserPlus className="w-3.5 h-3.5" />建立自訂 AI 員工</button></div>
       </aside>
 
       <section className="flex-1 min-w-0 flex flex-col rounded-2xl border border-[#E5E2DC] bg-[#FDFCFB] overflow-hidden">
         <div className="px-4 py-3 border-b border-[#E5E2DC] bg-white flex items-center justify-between gap-3">
           <div className="min-w-0"><div className="flex items-center gap-2"><span>{selectedCategory?.icon || '💬'}</span><h1 className="text-sm font-bold truncate">{selectedRoom?.name || '聊天室'}</h1><span className="text-[10px] text-[#8C938D]">{selectedCategory?.name}</span></div><p className="text-[10px] text-[#8C938D] truncate">{selectedRoom?.description}</p></div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#F3F1ED] text-[10px] text-[#555D57]"><Users className="w-3.5 h-3.5" />{selectedAgents.length} 位 AI 員工</div>
-            <button onClick={addAgent} className="p-2 rounded-lg hover:bg-[#F3F1ED]" title="新增 AI 員工"><UserPlus className="w-4 h-4" /></button>
-            <button onClick={() => addRoom(selectedCategory?.id || 'personal')} className="p-2 rounded-lg hover:bg-[#F3F1ED]" title="新增聊天室"><Plus className="w-4 h-4" /></button>
-          </div>
+          <div className="flex items-center gap-1.5 shrink-0"><div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#F3F1ED] text-[10px] text-[#555D57]"><Users className="w-3.5 h-3.5" />{selectedAgents.length} 位 AI 員工</div><button onClick={addAgent} className="p-2 rounded-lg hover:bg-[#F3F1ED]" title="新增 AI 員工"><UserPlus className="w-4 h-4" /></button><button onClick={() => addRoom(selectedCategory?.id || 'personal')} className="p-2 rounded-lg hover:bg-[#F3F1ED]" title="新增聊天室"><Plus className="w-4 h-4" /></button></div>
         </div>
-        <div className="px-4 py-2 bg-[#F8F7F4] border-b border-[#EBE8E1] flex items-center gap-2 overflow-x-auto">
-          <span className="text-[10px] font-semibold text-[#8C938D] whitespace-nowrap">本聊天室：</span>
-          {selectedAgents.map(agent => <span key={agent.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white border border-[#E1DDD4] text-[10px] whitespace-nowrap"><Briefcase className="w-3 h-3 text-[#385244]" />{agent.name} · {agent.roleName}</span>)}
-          {customAgents.filter(a => a.categoryId === selectedRoom?.categoryId && !selectedRoom?.agentIds.includes(a.id)).map(agent => <button key={agent.id} onClick={() => inviteAgent(agent.id)} className="px-2 py-1 rounded-full border border-dashed border-[#C9C4B9] text-[10px] text-[#737A75] whitespace-nowrap">+ 邀請 {agent.name}</button>)}
-        </div>
-        <div className="flex-1 min-h-0">
-          <AiTeamChat {...props} />
-        </div>
+        <div className="px-4 py-2 bg-[#F8F7F4] border-b border-[#EBE8E1] flex items-center gap-2 overflow-x-auto"><span className="text-[10px] font-semibold text-[#8C938D] whitespace-nowrap">本聊天室：</span>{selectedAgents.map(agent => <span key={agent.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white border border-[#E1DDD4] text-[10px] whitespace-nowrap"><Briefcase className="w-3 h-3 text-[#385244]" />{agent.name} · {agent.roleName}</span>)}{customAgents.filter(a => a.categoryId === selectedRoom?.categoryId && !selectedRoom?.agentIds.includes(a.id)).map(agent => <button key={agent.id} onClick={() => inviteAgent(agent.id)} className="px-2 py-1 rounded-full border border-dashed border-[#C9C4B9] text-[10px] text-[#737A75] whitespace-nowrap">+ 邀請 {agent.name}</button>)}</div>
+        <div className="flex-1 min-h-0"><AiTeamChat {...props} messages={roomMessages} onSendMessage={handleSendMessage} /></div>
       </section>
     </div>
   );
