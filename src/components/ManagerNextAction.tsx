@@ -14,6 +14,7 @@ const FOCUS_KEY = 'ait_focus_sessions_v1';
 const ACTIVE_FOCUS_KEY = 'ait_active_focus_session_v1';
 const MEMORY_KEY = 'ait_manager_memories_v2';
 const AUTO_PLAN_KEY = 'ait_manager_auto_plan_v1';
+const REMINDER_KEY = 'ait_manager_execution_reminder_v1';
 const FOCUS_CHANGED_EVENT = 'ait:focus-changed';
 
 function deadlineValue(deadline?: string) {
@@ -33,13 +34,13 @@ const ManagerNextAction: React.FC = () => {
   const planManager = usePlanManager({ workProjects, workTasks, studyTasks, todayBlocks });
   const [activeFocus, setActiveFocus] = useState<FocusSession | null>(() => loadActiveFocus());
   const [elapsed, setElapsed] = useState(0);
-  const [memories, setMemories] = useState<ManagerMemory[]>(() => loadMemories());
+  const [memories] = useState<ManagerMemory[]>(() => loadMemories());
   const [nowTick, setNowTick] = useState(Date.now());
   const [autoPlanMessage, setAutoPlanMessage] = useState<string | null>(null);
+  const [reminder, setReminder] = useState<string | null>(null);
 
   useEffect(() => { const id = window.setInterval(() => setNowTick(Date.now()), 30000); return () => window.clearInterval(id); }, []);
-  useEffect(() => { localStorage.setItem(MEMORY_KEY, JSON.stringify(memories)); }, [memories]);
-  useEffect(() => { const sync = () => { setActiveFocus(loadActiveFocus()); setMemories(loadMemories()); }; window.addEventListener(FOCUS_CHANGED_EVENT, sync); window.addEventListener('storage', sync); return () => { window.removeEventListener(FOCUS_CHANGED_EVENT, sync); window.removeEventListener('storage', sync); }; }, []);
+  useEffect(() => { const sync = () => setActiveFocus(loadActiveFocus()); window.addEventListener(FOCUS_CHANGED_EVENT, sync); window.addEventListener('storage', sync); return () => { window.removeEventListener(FOCUS_CHANGED_EVENT, sync); window.removeEventListener('storage', sync); }; }, []);
   useEffect(() => { if (!activeFocus) { setElapsed(0); return; } const tick = () => setElapsed(getElapsedMinutes(activeFocus)); tick(); const id = window.setInterval(tick, 1000); return () => window.clearInterval(id); }, [activeFocus]);
 
   const scopedWorkTasks = useMemo(() => workTasks.filter(task => isPending(task) && task.workspaceId === currentContext.workspaceId && task.projectId === currentContext.projectId), [workTasks, currentContext]);
@@ -48,7 +49,6 @@ const ManagerNextAction: React.FC = () => {
   const sessions = useMemo(() => { try { return JSON.parse(localStorage.getItem(FOCUS_KEY) || '[]') as FocusSession[]; } catch { return []; } }, [nowTick, activeFocus]);
   const diagnosis = useMemo(() => diagnoseBehavior({ workTasks: scopedWorkTasks, studyTasks: scopedStudyTasks, focusSessions: sessions }), [scopedWorkTasks, scopedStudyTasks, sessions]);
   const adaptive = useMemo(() => buildAdaptiveProposals({ workTasks: scopedWorkTasks, studyTasks: scopedStudyTasks, focusSessions: sessions, memories }), [scopedWorkTasks, scopedStudyTasks, sessions, memories]);
-
   const candidate = useMemo<WorkTask | StudyTask | undefined>(() => [...candidateTasks].sort((a, b) => {
     const riskA = diagnosis.some(x => x.level === 'danger' && x.id.includes(a.id)) ? 1 : 0;
     const riskB = diagnosis.some(x => x.level === 'danger' && x.id.includes(b.id)) ? 1 : 0;
@@ -73,6 +73,16 @@ const ManagerNextAction: React.FC = () => {
   }, [candidate, current, activeFocus, planManager.ensurePlanForTask]);
 
   const executionDecision = useMemo(() => candidate ? decideNextExecution({ task: candidate, plan: current?.plan, state: current?.state, todayBlocks, now: new Date(nowTick), activeFocus: Boolean(activeFocus) }) : undefined, [candidate, current, todayBlocks, nowTick, activeFocus]);
+
+  useEffect(() => {
+    if (!candidate || !executionDecision || activeFocus || executionDecision.action !== 'start-now') return;
+    const blockId = executionDecision.block?.id ?? 'no-block';
+    const marker = `${candidate.id}:${blockId}`;
+    if (localStorage.getItem(REMINDER_KEY) === marker) return;
+    localStorage.setItem(REMINDER_KEY, marker);
+    setReminder(`現在是適合處理「${candidate.title}」的時間。Manager 建議開始下一步：${executionDecision.step?.title ?? '執行目前計畫'}。`);
+  }, [candidate, executionDecision, activeFocus]);
+
   const createPlan = () => { if (candidate) planManager.createPlanForTask(candidate); };
   const formatMinutes = (hours: number) => { const minutes = Math.round(hours * 60); return minutes >= 60 ? `${Math.floor(minutes / 60)} 小時 ${minutes % 60 ? `${minutes % 60} 分` : ''}`.trim() : `${minutes} 分鐘`; };
   const stepStatus = (step: ExecutionPlanStep, state?: { runningStepId?: string; completedStepIds: string[] }) => { if (!state) return 'ready'; if (state.completedStepIds.includes(step.id)) return 'completed'; if (state.runningStepId === step.id) return 'running'; return step.dependsOn.every(id => state.completedStepIds.includes(id)) ? 'ready' : 'locked'; };
@@ -83,6 +93,7 @@ const ManagerNextAction: React.FC = () => {
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-medium text-slate-500">Manager Decision Layer</p><h2 className="mt-1 text-xl font-bold text-slate-900">🎯 Manager 下一步</h2><p className="mt-1 text-sm text-slate-500">不只看優先級，也會參考 Diagnosis、歷史行為與 Adaptive Planning。</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{visiblePlans.length} 個進行中計畫</span></div>
     {(diagnosisAction || adaptiveAction) && <div className="mt-5 grid gap-3 md:grid-cols-2">{diagnosisAction && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="text-xs font-semibold text-amber-700">🔍 Diagnosis</p><p className="mt-1 font-semibold text-slate-800">{diagnosisAction.title}</p><p className="mt-1 text-sm text-slate-600">{diagnosisAction.recommendation}</p></div>}{adaptiveAction && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-500">🔄 Adaptive Planning</p><p className="mt-1 font-semibold text-slate-800">{adaptiveAction.title}</p><p className="mt-1 text-sm text-slate-600">{adaptiveAction.suggestedAction}</p></div>}</div>}
     {autoPlanMessage && <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">✓ {autoPlanMessage}</div>}
+    {reminder && <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4"><p className="text-xs font-semibold text-blue-700">🔔 Manager 提醒</p><p className="mt-1 text-sm font-medium text-slate-800">{reminder}</p></div>}
     {executionDecision && <div className="mt-5 rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-400">⏱ Manager 時間判斷</p><p className="mt-1 font-semibold text-slate-900">{executionDecision.title}</p><p className="mt-1 text-sm text-slate-600">{executionDecision.reason}</p>{executionDecision.step && <p className="mt-2 text-xs font-medium text-slate-500">下一步：{executionDecision.step.title}</p>}</div><span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${executionDecision.urgency === 'high' ? 'bg-red-50 text-red-700' : executionDecision.urgency === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{executionDecision.action === 'start-now' ? '現在執行' : executionDecision.action === 'prepare-next' ? '先準備' : executionDecision.action === 'protect-focus' ? '保護 Focus' : '等待合適時段'}</span></div></div>}
     {activeFocus && <div className="mt-5 rounded-xl border border-slate-300 bg-slate-50 p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold text-emerald-600">🟢 Focus 執行中</p><h3 className="mt-1 font-bold text-slate-900">{activeFocus.taskTitle}</h3><p className="mt-1 text-sm text-slate-500">已執行 {elapsed} 分鐘 · 預估 {formatMinutes(activeFocus.plannedMinutes / 60)}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">Execution + Focus</span></div></div>}
     {!current && !candidate && <div className="mt-5 rounded-xl bg-slate-50 p-5 text-sm text-slate-500">目前沒有可建立執行計畫的 User Task。新增任務後，Manager 會在這裡提供下一步。</div>}
