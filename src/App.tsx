@@ -3,6 +3,7 @@ import { Navbar } from './components/Navbar';
 import { AiTeamChat } from './components/AiTeamChat';
 import OwnerDashboard from './components/OwnerDashboard';
 import ManagerNextAction from './components/ManagerNextAction';
+import ManagerControlCenter from './components/ManagerControlCenter';
 import { AgentActivityView } from './components/AgentActivityView';
 import { WorkView } from './components/WorkView';
 import { StudyView } from './components/StudyView';
@@ -40,8 +41,8 @@ function AppMainContent() {
 
     <main className="flex-1 w-full pb-10">
       {activeTab === 'chat' && <div className="mx-auto max-w-7xl px-0">
-        {/* Manager Chat is the primary Owner workspace: talk first, inspect the organization below. */}
         <section className="relative">
+          <ManagerControlCenter onCommand={sendMessage} isLoading={isLoading} />
           <AiTeamChat
             messages={messages}
             onSendMessage={sendMessage}
