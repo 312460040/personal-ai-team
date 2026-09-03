@@ -9,17 +9,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T | null
       ...options,
     });
     if (!response.ok) return null;
-    return (await response.json()) as T;
+    const payload = await response.json();
+    return (payload?.data ?? payload) as T;
   } catch {
-    // The app intentionally keeps working when the database/API is unavailable.
     return null;
   }
 }
 
-export function persistConversation(message: ChatMessage, sessionId: string, context?: { projectId?: string | null; taskId?: string | null }): Promise<{ id: string } | null> {
+export function persistConversation(message: ChatMessage, sessionId: string, context?: { projectId?: string | null; taskId?: string | null; userId?: string }): Promise<{ id: string } | null> {
   return request<{ id: string }>('/conversations', {
     method: 'POST',
     body: JSON.stringify({
+      userId: context?.userId,
       sessionId,
       role: message.sender,
       agentId: message.sender === 'manager' ? 'manager' : null,
@@ -32,20 +33,20 @@ export function persistConversation(message: ChatMessage, sessionId: string, con
 }
 
 export function persistWorkRecord(input: {
+  userId?: string;
   type: string;
   title: string;
   content: string;
   conversationId?: string | null;
   projectId?: string | null;
   taskId?: string | null;
+  createdBy?: 'user' | 'system';
 }): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/work-records', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return request<{ id: string }>('/work-records', { method: 'POST', body: JSON.stringify(input) });
 }
 
 export function persistFocusSession(input: {
+  userId?: string;
   taskId?: string | null;
   plannedMinutes: number;
   actualMinutes?: number;
@@ -54,28 +55,41 @@ export function persistFocusSession(input: {
   completed: boolean;
   interruptionCount?: number;
 }): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/focus-sessions', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return request<{ id: string }>('/focus-sessions', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function persistMemory(input: {
+  userId?: string;
+  domain: 'global' | 'work' | 'study';
+  type: string;
+  content: string;
+  source?: 'owner' | 'observed' | 'inferred';
+  confidence?: number;
+  projectId?: string | null;
+  taskId?: string | null;
+  evidenceCount?: number;
+}): Promise<{ id: string } | null> {
+  return request<{ id: string }>('/memories', { method: 'POST', body: JSON.stringify(input) });
 }
 
 export async function getScopedMemories(input: {
+  userId?: string;
   domain: 'global' | 'work' | 'study';
   projectId?: string | null;
   taskId?: string | null;
   query?: string;
   limit?: number;
-}): Promise<Array<{ id: string; type: string; content: string; confidence: number; source: string }> > {
-  return (await request<Array<{ id: string; type: string; content: string; confidence: number; source: string }>>('/memories', {
+}): Promise<Array<{ id: string; type: string; content: string; confidence: number; source: string }>> {
+  return (await request<Array<{ id: string; type: string; content: string; confidence: number; source: string }>>('/memories/search', {
     method: 'POST',
     body: JSON.stringify(input),
   })) || [];
 }
 
-export async function getCalendarEvents(input?: { from?: string; to?: string }): Promise<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>> {
-  return (await request<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>>('/calendar-events', {
-    method: 'POST',
-    body: JSON.stringify(input || {}),
-  })) || [];
+export async function getCalendarEvents(input?: { userId?: string; from?: string; to?: string }): Promise<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>> {
+  const params = new URLSearchParams();
+  if (input?.userId) params.set('userId', input.userId);
+  if (input?.from) params.set('from', input.from);
+  if (input?.to) params.set('to', input.to);
+  return (await request<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>>(`/calendar-events?${params.toString()}`, { method: 'GET' })) || [];
 }
