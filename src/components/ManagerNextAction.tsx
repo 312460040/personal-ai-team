@@ -11,7 +11,7 @@ function deadlineValue(deadline?: string) {
 }
 
 function priorityValue(priority?: string) {
-  return priority === 'high' ? 0 : priority === 'medium' ? 1 : 2;
+  return priority === 'high' ? 2 : priority === 'medium' ? 1 : 0;
 }
 
 function isPending<T extends { status: string; source?: string }>(task: T) {
