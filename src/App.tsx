@@ -39,11 +39,21 @@ function AppMainContent() {
     />
 
     <main className="flex-1 w-full pb-10">
-      {activeTab === 'chat' && <div className="mx-auto max-w-7xl space-y-6 px-0">
-        <OwnerDashboard />
-        <ManagerNextAction />
-        <section className="border-t border-slate-200 pt-6">
-          <AiTeamChat messages={messages} onSendMessage={sendMessage} isLoading={isLoading} onApplyScheduleToToday={applyScheduleToToday} currentActiveAgents={currentActiveAgents} />
+      {activeTab === 'chat' && <div className="mx-auto max-w-7xl px-0">
+        {/* Manager Chat is the primary Owner workspace: talk first, inspect the organization below. */}
+        <section className="relative">
+          <AiTeamChat
+            messages={messages}
+            onSendMessage={sendMessage}
+            isLoading={isLoading}
+            onApplyScheduleToToday={applyScheduleToToday}
+            currentActiveAgents={currentActiveAgents}
+          />
+        </section>
+
+        <section className="space-y-6 px-2 sm:px-4 pb-6">
+          <OwnerDashboard />
+          <ManagerNextAction />
         </section>
       </div>}
       {activeTab === 'activity' && <AgentActivityView activityLogs={activityLogs} onTriggerDemoFlow={() => { setActiveTab('chat'); sendMessage('幫我檢查目前有哪些工作需要優先處理？'); }} isLoading={isLoading} />}
