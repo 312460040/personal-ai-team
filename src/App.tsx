@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Navbar } from './components/Navbar';
 import { AiTeamChat } from './components/AiTeamChat';
 import OwnerDashboard from './components/OwnerDashboard';
+import ManagerNextAction from './components/ManagerNextAction';
 import { AgentActivityView } from './components/AgentActivityView';
 import { WorkView } from './components/WorkView';
 import { StudyView } from './components/StudyView';
@@ -40,6 +41,7 @@ function AppMainContent() {
     <main className="flex-1 w-full pb-10">
       {activeTab === 'chat' && <div className="mx-auto max-w-7xl space-y-6 px-0">
         <OwnerDashboard />
+        <ManagerNextAction />
         <section className="border-t border-slate-200 pt-6">
           <AiTeamChat messages={messages} onSendMessage={sendMessage} isLoading={isLoading} onApplyScheduleToToday={applyScheduleToToday} currentActiveAgents={currentActiveAgents} />
         </section>
