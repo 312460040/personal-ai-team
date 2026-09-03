@@ -15,9 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Set GitHub repository variable VITE_API_BASE_URL to the public Render URL.
-  # Leaving it empty keeps local/same-origin /api behavior.
-  VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+  # Public Render backend used by the GitHub Pages frontend.
+  VITE_API_BASE_URL: https://personal-ai-team-1.onrender.com
 
 jobs:
   build:
