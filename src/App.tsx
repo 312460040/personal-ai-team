@@ -52,7 +52,7 @@ function AppMainContent() {
     <main className="flex-1 w-full pb-10">
       {activeTab === 'home' && <div className="mx-auto max-w-7xl px-2 sm:px-4 pt-6 space-y-6"><OwnerDashboard /><ManagerSupervision /><ManagerNextAction /></div>}
       {activeTab === 'chat' && <div className="mx-auto max-w-7xl px-2 sm:px-4 pt-3 space-y-3">
-        <PublicIntakeChat onSend={handlePublicIntakeSend} isLoading={isLoading} />
+        <PublicIntakeChat onSend={handlePublicIntakeSend} isLoading={isLoading} workTasks={workTasks} studyTasks={studyTasks} />
         <ChatWorkspace messages={messages} onSendMessage={handleChatSend} isLoading={isLoading} onApplyScheduleToToday={applyScheduleToToday} currentActiveAgents={currentActiveAgents} agentRegistry={AGENT_REGISTRY} />
       </div>}
       {activeTab === 'activity' && <AgentActivityView activityLogs={activityLogs} onTriggerDemoFlow={() => { setActiveTab('chat'); sendMessage('幫我檢查目前有哪些工作需要優先處理？'); }} isLoading={isLoading} />}
