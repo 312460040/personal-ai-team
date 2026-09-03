@@ -1,11 +1,5 @@
 import type { StructuredTimeBlock } from '../types';
 
-/**
- * Manager 的最後一層「主動規劃」：
- * API 負責理解／分類／建立 Task；這一層把新 Task 轉成可執行的步驟與時間建議。
- * 不直接改動 Today，仍由 Owner 的套用按鈕決定是否寫入日程。
- */
-
 type PlannedTask = {
   id: string;
   title: string;
@@ -27,69 +21,60 @@ const inferSteps = (title: string, category: 'work' | 'study'): string[] => {
 };
 
 function priorityWeight(priority?: string) { return priority === 'high' ? 3 : priority === 'low' ? 1 : 2; }
-
-function parseClock(value: string) {
-  const match = String(value || '').match(/(\d{1,2}):(\d{2})/);
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
-}
-
-function formatClock(minutes: number) {
-  const h = Math.floor(minutes / 60) % 24;
-  const m = minutes % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
+function parseClock(value: string) { const match = String(value || '').match(/(\d{1,2}):(\d{2})/); return match ? Number(match[1]) * 60 + Number(match[2]) : null; }
+function formatClock(minutes: number) { const h = Math.floor(minutes / 60) % 24; const m = minutes % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; }
 
 function planBlocks(tasks: PlannedTask[], todayBlocks: any[]): StructuredTimeBlock[] {
   const busy: Array<[number, number]> = [];
   (Array.isArray(todayBlocks) ? todayBlocks : []).forEach((block: any) => {
-    const raw = String(block?.timeRange || block?.time || '');
-    const parts = raw.split(/\s*[-~–—]\s*/);
+    const parts = String(block?.timeRange || block?.time || '').split(/\s*[-~–—]\s*/);
     if (parts.length !== 2) return;
-    const start = parseClock(parts[0]);
-    const end = parseClock(parts[1]);
+    const start = parseClock(parts[0]); const end = parseClock(parts[1]);
     if (start !== null && end !== null && end > start) busy.push([start, end]);
   });
-  busy.sort((a, b) => a[0] - b[0]);
   const ordered = [...tasks].sort((a, b) => priorityWeight(b.priority) - priorityWeight(a.priority));
   const result: StructuredTimeBlock[] = [];
   let cursor = 9 * 60;
   ordered.forEach((task) => {
     const duration = Math.max(30, Math.round((task.estimatedHours || 1) * 60));
-    let start = cursor;
-    let placed = false;
     for (let minute = cursor; minute <= 21 * 60 - duration; minute += 15) {
       const end = minute + duration;
-      const conflict = busy.some(([bStart, bEnd]) => minute < bEnd && end > bStart) || result.some((b) => {
-        const rs = parseClock(String(b.time).split('-')[0]);
-        const re = parseClock(String(b.time).split('-')[1]);
-        return rs !== null && re !== null && minute < re && end > rs;
+      const conflict = busy.some(([s, e]) => minute < e && end > s) || result.some((b) => {
+        const p = String(b.time).split('-'); const s = parseClock(p[0]); const e = parseClock(p[1]);
+        return s !== null && e !== null && minute < e && end > s;
       });
-      if (!conflict) { start = minute; placed = true; break; }
+      if (conflict) continue;
+      result.push({ time: `${formatClock(minute)}-${formatClock(end)}`, type: task.category === 'work' ? 'work' : 'study', title: task.title, agentOwner: task.category === 'work' ? 'Work Agent' : 'Study Agent', duration: `${(duration / 60).toFixed(2).replace(/\.00$/, '')}h`, tips: 'Manager 依優先級、預估工時與既有時間塊提出建議；尚未寫入 Today。' } as StructuredTimeBlock);
+      cursor = end + 15;
+      break;
     }
-    if (!placed) return;
-    const end = start + duration;
-    result.push({
-      time: `${formatClock(start)}-${formatClock(end)}`,
-      type: task.category === 'work' ? 'work' : 'study',
-      title: task.title,
-      agentOwner: task.category === 'work' ? 'Work Agent' : 'Study Agent',
-      duration: `${(duration / 60).toFixed(2).replace(/\.00$/, '')}h`,
-      tips: 'Manager 依優先級、預估工時與既有時間塊提出建議；尚未寫入 Today。',
-    } as StructuredTimeBlock);
-    cursor = end + 15;
   });
   return result;
 }
 
+function parseLocalArrangement(payload: any): PlannedTask[] {
+  const text = String(payload?.finalSynthesisMarkdown || '');
+  const tasks: PlannedTask[] = [];
+  let category: 'work' | 'study' = 'work';
+  text.split('\n').forEach((line: string) => {
+    if (/^####\s*💼/.test(line)) category = 'work';
+    if (/^####\s*🎓/.test(line)) category = 'study';
+    const match = line.match(/^-\s*\*\*(.+?)\*\*｜/);
+    if (!match) return;
+    const title = match[1].trim();
+    if (title) tasks.push({ id: `planned-${tasks.length}-${title}`, title, category, priority: /｜high｜/i.test(line) ? 'high' : /｜low｜/i.test(line) ? 'low' : 'medium', estimatedHours: 1 });
+  });
+  return tasks;
+}
+
 function planningMarkdown(tasks: PlannedTask[], blocks: StructuredTimeBlock[]) {
   const lines = tasks.map((task) => {
-    const steps = inferSteps(task.title, task.category);
     const label = task.category === 'work' ? '💼 工作' : '🎓 課業／研究';
+    const steps = inferSteps(task.title, task.category);
     return `#### ${label}｜${task.title}\n- 優先級：**${task.priority || 'medium'}**\n- 預估工時：**${task.estimatedHours || 1}h**\n- 執行步驟：${steps.map((s, i) => `${i + 1}. ${s}`).join(' → ')}`;
   }).join('\n\n');
   const schedule = blocks.length ? blocks.map((b) => `- **${b.time}**｜${b.title}｜${b.agentOwner}`).join('\n') : '- 目前沒有可安全放入既有時間塊的空檔，Manager 會等待重新排程。';
-  return `### 🧠 Manager 主動規劃\n\nManager 已經替你完成 **理解 → 分類 → 優先級 → 執行拆解 → 時間配置**，不是只把事情記成待辦。\n\n${lines}\n\n### 🗓️ 建議執行時間\n${schedule}\n\n> 這是 Manager 的規劃提案。尚未套用到 Today；你確認後才會寫入日程。`;
+  return `### 🧠 Manager 主動規劃\n\nManager 已經替你完成 **理解 → 分類 → 優先級 → 執行拆解 → 時間配置**。\n\n${lines}\n\n### 🗓️ 建議執行時間\n${schedule}\n\n> 這是 Manager 的規劃提案；尚未直接修改 Today。`;
 }
 
 export function installManagerPlanningOverlay() {
@@ -107,10 +92,11 @@ export function installManagerPlanningOverlay() {
     if (!body) return response;
     try {
       const payload = await response.clone().json();
-      const created: PlannedTask[] = [
+      let created: PlannedTask[] = [
         ...(Array.isArray(payload.createdWorkTasks) ? payload.createdWorkTasks.map((t: any) => ({ ...t, category: 'work' })) : []),
         ...(Array.isArray(payload.createdStudyTasks) ? payload.createdStudyTasks.map((t: any) => ({ ...t, category: 'study' })) : []),
       ];
+      if (!created.length && payload.intentType === 'TASK_ARRANGEMENT_LOCAL') created = parseLocalArrangement(payload);
       if (!created.length) return response;
       const blocks = planBlocks(created, body?.context?.todayBlocks || []);
       const originalText = String(payload.finalSynthesisMarkdown || '');
