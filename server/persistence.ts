@@ -70,11 +70,19 @@ function isViewableTable(value: string): value is ViewableTable {
   return (VIEWABLE_TABLES as readonly string[]).includes(value);
 }
 
+async function readTable(table: ViewableTable, userId: string, limit?: number) {
+  const boundedLimit = Math.min(Math.max(limit || 100, 1), 200);
+  if (table === 'users') {
+    return supabase(`users?id=eq.${encodeURIComponent(userId)}&select=id,external_id,display_name,created_at&limit=1`);
+  }
+  return supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc&limit=${boundedLimit}`);
+}
+
 router.get('/tables', async (_req, res) => {
   try {
     const userId = res.locals.userId as string;
     const results = await Promise.all(VIEWABLE_TABLES.map(async (table) => {
-      const rows = await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*`);
+      const rows = await readTable(table, userId, 200);
       return { table, count: Array.isArray(rows) ? rows.length : 0 };
     }));
     res.json(results);
@@ -87,9 +95,8 @@ router.get('/tables/:table', async (req, res) => {
   const table = req.params.table;
   if (!isViewableTable(table)) return res.status(400).json({ error: 'Table is not available in the read-only explorer' });
   try {
-    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
     const userId = res.locals.userId as string;
-    const rows = await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc&limit=${limit}`);
+    const rows = await readTable(table, userId, Number(req.query.limit) || 100);
     res.json({ table, rows: Array.isArray(rows) ? rows : [] });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
