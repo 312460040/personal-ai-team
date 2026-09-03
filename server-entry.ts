@@ -6,6 +6,7 @@ const originalUse = express.application.use;
 let useCount = 0;
 let mounted = false;
 let corsMounted = false;
+const DOMAIN_LABELS: Record<string, string> = { work: '工作', study: '課業／研究', personal: '個人規劃', global: '全域任務管理' };
 
 express.application.use = function patchedUse(...args: any[]) {
   useCount += 1;
@@ -13,23 +14,15 @@ express.application.use = function patchedUse(...args: any[]) {
     corsMounted = true;
     originalUse.call(this, (req: any, res: any, next: any) => {
       const origin = req.headers.origin as string | undefined;
-      const allowedOrigins = new Set([
-        'https://312460040.github.io', 'http://localhost:5173', 'http://127.0.0.1:5173', process.env.FRONTEND_ORIGIN,
-      ].filter(Boolean) as string[]);
-      if (origin && allowedOrigins.has(origin)) {
-        res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Vary', 'Origin');
-      }
+      const allowedOrigins = new Set(['https://312460040.github.io', 'http://localhost:5173', 'http://127.0.0.1:5173', process.env.FRONTEND_ORIGIN].filter(Boolean) as string[]);
+      if (origin && allowedOrigins.has(origin)) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Owner-Id, Authorization');
       if (req.method === 'OPTIONS') return res.status(204).end();
       next();
     });
   }
-  if (!mounted && useCount >= 2) {
-    mounted = true;
-    originalUse.call(this, '/api/persistence', persistenceRouter);
-  }
+  if (!mounted && useCount >= 2) { mounted = true; originalUse.call(this, '/api/persistence', persistenceRouter); }
   return originalUse.apply(this, args as any);
 };
 
@@ -43,7 +36,6 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
         const room = context?.chatRoom;
         const isPublicRoom = room?.id === 'room-public' || room?.chatRoomId === 'room-public' || context?.chatRoomId === 'room-public' || context?.currentContext?.workspaceId === 'public';
         if (!isPublicRoom) return handler.call(this, req, res, next);
-
         const result = await classifyPublicRequest(req.body?.message || '', context?.workProjects || []);
         const routingInstruction = buildPublicRoutingInstruction(result);
         req.body.context = {
@@ -54,7 +46,6 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
             projectId: result.category === 'work' ? result.projectId : null,
           },
         };
-
         const originalJson = res.json.bind(res);
         res.json = (payload: any) => {
           const routedPayload = { ...payload, publicIntake: req.body.context.publicIntake };
@@ -73,9 +64,4 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
   return originalPost.call(this, path, ...handlers);
 };
 
-const DOMAIN_LABELS: Record<string, string> = { work: '工作', study: '課業／研究', personal: '個人規劃', global: '全域任務管理' };
-
-import('./server.ts').catch(error => {
-  console.error('Failed to start Personal AI Team server:', error);
-  process.exitCode = 1;
-});
+import('./server.ts').catch(error => { console.error('Failed to start Personal AI Team server:', error); process.exitCode = 1; });
