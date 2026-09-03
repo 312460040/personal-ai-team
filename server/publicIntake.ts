@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 
-export type PublicIntakeCategory = 'work' | 'study' | 'personal';
+export type PublicIntakeCategory = 'work' | 'study' | 'personal' | 'global';
 
 export interface PublicIntakeResult {
   category: PublicIntakeCategory;
@@ -11,42 +11,35 @@ export interface PublicIntakeResult {
 }
 
 const DOMAIN_LABELS: Record<PublicIntakeCategory, string> = {
-  work: '工作',
-  study: '課業／研究',
-  personal: '個人規劃',
+  work: '工作', study: '課業／研究', personal: '個人規劃', global: '全域任務管理',
 };
 
-/**
- * The Public Area is the Manager's intake desk.
- *
- * Primary path: semantic classification by the Manager model.
- * Fallback path: deterministic rules, used only when the model is unavailable
- * or returns an invalid result. Rules are a safety net, not the product's
- * primary understanding mechanism.
- *
- * Important: classification never invents a project. A work project is only
- * selected when the request contains a unique literal project-name match from
- * the user's own project list.
- */
 export async function classifyPublicRequest(message: string, workProjects: any[] = []): Promise<PublicIntakeResult> {
   const text = String(message || '').trim();
+  if (isGlobalTaskReviewRequest(text)) {
+    return {
+      category: 'global', confidence: 'high',
+      reason: '這是跨工作與課業的全域任務檢視／整理需求，不應受單一 Project Context 限制。',
+      projectId: null, method: 'rule_fallback',
+    };
+  }
   const aiResult = await classifyWithManagerAI(text);
   const base = aiResult || classifyWithRules(text);
-
   let projectId: string | null = null;
   if (base.category === 'work' && Array.isArray(workProjects)) {
     const lower = text.toLowerCase();
-    const candidates = workProjects
-      .filter((p) => p?.source === 'user' && p?.id && p?.title)
+    const candidates = workProjects.filter((p) => p?.source === 'user' && p?.id && p?.title)
       .filter((p) => lower.includes(String(p.title).toLowerCase()));
     if (candidates.length === 1) projectId = candidates[0].id;
   }
-
   const reason = base.category === 'work'
     ? `${base.reason}${projectId ? `，並唯一匹配使用者專案「${workProjects.find((p) => p.id === projectId)?.title || projectId}」` : '；目前沒有安全可唯一匹配的專案'}`
     : base.reason;
-
   return { ...base, reason, projectId };
+}
+
+function isGlobalTaskReviewRequest(message: string): boolean {
+  return /(目前|現在|所有|全部|現有).{0,12}(任務|待辦|工作|課業)|整理.{0,12}(所有|全部|目前|現在).{0,12}(任務|待辦)|任務.{0,12}(整理|清單|盤點).{0,12}(審核|留下|刪除|保留)|給我.{0,12}(審核|檢視).{0,12}(任務|待辦)/i.test(message);
 }
 
 async function classifyWithManagerAI(message: string): Promise<Omit<PublicIntakeResult, 'projectId' | 'method'> | null> {
@@ -57,24 +50,15 @@ async function classifyWithManagerAI(message: string): Promise<Omit<PublicIntake
     const response = await ai.models.generateContent({
       model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       contents: `你是 Personal AI Team 的 Manager Agent，負責公共區（總收件匣）的第一層語意分流。
-
-請根據使用者真正想處理的事情判斷它最適合進入哪個工作空間：
-- work：公司、客戶、主管、行銷、企劃、程式開發、專案、工作任務等職場事項。
-- study：課業、考試、複習、讀書、論文、研究、文獻、研究方法等學習事項。
-- personal：生活安排、健康習慣、休息、旅行、家庭、個人目標、日程等私人事項。
-
-不要要求使用者提供分類關鍵字；要理解語意與上下文。
-若內容同時涉及多個領域，選擇「主要目的」所在的領域。
-若只是一般聊天或資訊詢問且沒有明確工作／課業／個人任務脈絡，選 personal，confidence=low。
-
-只輸出 JSON，不要 Markdown：
-{"category":"work|study|personal","confidence":"high|medium|low","reason":"一句繁體中文說明"}
-
+請判斷使用者真正想處理的事情：work=工作、study=課業研究、personal=私人生活、global=跨工作與課業的全域任務管理。
+如果使用者要求「目前所有任務／全部待辦／整理任務給我審核／盤點哪些任務要留下與狀態」，必須選 global，因為這是跨 Project 的唯讀總覽，不需要指定單一專案。
+若內容同時涉及多個領域，global 優先用於任務總覽；只有針對特定工作內容時才選 work。
+只輸出 JSON：{"category":"work|study|personal|global","confidence":"high|medium|low","reason":"一句繁體中文說明"}
 使用者訊息：${JSON.stringify(message)}`,
     });
     const raw = String(response.text || '').trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
     const parsed = JSON.parse(raw);
-    if (!['work', 'study', 'personal'].includes(parsed.category)) return null;
+    if (!['work', 'study', 'personal', 'global'].includes(parsed.category)) return null;
     if (!['high', 'medium', 'low'].includes(parsed.confidence)) return null;
     if (typeof parsed.reason !== 'string' || !parsed.reason.trim()) return null;
     return { category: parsed.category, confidence: parsed.confidence, reason: parsed.reason.trim(), method: 'ai' };
@@ -97,6 +81,5 @@ function classifyWithRules(message: string): Omit<PublicIntakeResult, 'projectId
 }
 
 export function buildPublicRoutingInstruction(result: PublicIntakeResult): string {
-  const label = DOMAIN_LABELS[result.category];
-  return `Public Area Manager routing decision: category=${result.category}; label=${label}; confidence=${result.confidence}; method=${result.method}; projectId=${result.projectId || 'none'}; reason=${result.reason}`;
+  return `Public Area Manager routing decision: category=${result.category}; label=${DOMAIN_LABELS[result.category]}; confidence=${result.confidence}; method=${result.method}; projectId=${result.projectId || 'none'}; reason=${result.reason}`;
 }
