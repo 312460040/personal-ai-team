@@ -1,17 +1,22 @@
 import type { ChatMessage } from '../types';
 
 const API_BASE = '/api/persistence';
+const OWNER_ID = 'personal-owner';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
   try {
     const response = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+      headers: { 'Content-Type': 'application/json', 'x-owner-id': OWNER_ID, ...(options?.headers || {}) },
       ...options,
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.warn(`[Persistence API] ${response.status} ${path}`);
+      return null;
+    }
     const payload = await response.json();
     return (payload?.data ?? payload) as T;
-  } catch {
+  } catch (error) {
+    console.warn(`[Persistence API] request failed: ${path}`, error);
     return null;
   }
 }
@@ -20,7 +25,7 @@ export function persistConversation(message: ChatMessage, sessionId: string, con
   return request<{ id: string }>('/conversations', {
     method: 'POST',
     body: JSON.stringify({
-      userId: context?.userId,
+      userId: context?.userId || OWNER_ID,
       sessionId,
       role: message.sender,
       agentId: message.sender === 'manager' ? 'manager' : null,
@@ -42,7 +47,7 @@ export function persistWorkRecord(input: {
   taskId?: string | null;
   createdBy?: 'user' | 'system';
 }): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/work-records', { method: 'POST', body: JSON.stringify(input) });
+  return request<{ id: string }>('/work-records', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) });
 }
 
 export function persistFocusSession(input: {
@@ -55,7 +60,7 @@ export function persistFocusSession(input: {
   completed: boolean;
   interruptionCount?: number;
 }): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/focus-sessions', { method: 'POST', body: JSON.stringify(input) });
+  return request<{ id: string }>('/focus-sessions', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) });
 }
 
 export function persistMemory(input: {
@@ -69,7 +74,7 @@ export function persistMemory(input: {
   taskId?: string | null;
   evidenceCount?: number;
 }): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/memories', { method: 'POST', body: JSON.stringify(input) });
+  return request<{ id: string }>('/memories', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) });
 }
 
 export async function getScopedMemories(input: {
@@ -82,13 +87,13 @@ export async function getScopedMemories(input: {
 }): Promise<Array<{ id: string; type: string; content: string; confidence: number; source: string }>> {
   return (await request<Array<{ id: string; type: string; content: string; confidence: number; source: string }>>('/memories/search', {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }),
   })) || [];
 }
 
 export async function getCalendarEvents(input?: { userId?: string; from?: string; to?: string }): Promise<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>> {
   const params = new URLSearchParams();
-  if (input?.userId) params.set('userId', input.userId);
+  params.set('userId', input?.userId || OWNER_ID);
   if (input?.from) params.set('from', input.from);
   if (input?.to) params.set('to', input.to);
   return (await request<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>>(`/calendar-events?${params.toString()}`, { method: 'GET' })) || [];
