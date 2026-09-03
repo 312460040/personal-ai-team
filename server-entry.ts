@@ -16,4 +16,7 @@ express.application.use = function patchedUse(...args: any[]) {
   return originalUse.apply(this, args as any);
 };
 
-await import('./server.ts');
+import('./server.ts').catch(error => {
+  console.error('Failed to start Personal AI Team server:', error);
+  process.exitCode = 1;
+});
