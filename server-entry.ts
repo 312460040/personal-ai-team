@@ -29,26 +29,56 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
       return function publicIntakeHandler(this: any, req: any, res: any, next: any) {
         const context = req.body?.context;
         const room = context?.chatRoom;
-        if (room?.id === 'room-public' || room?.chatRoomId === 'room-public' || context?.currentContext?.workspaceId === 'public') {
-          const result = classifyPublicRequest(req.body?.message || '', context?.workProjects || []);
-          req.body.context = {
-            ...context,
-            publicIntake: {
-              category: result.category,
-              confidence: result.confidence,
-              reason: result.reason,
-              projectId: result.projectId,
-              routingInstruction: buildPublicRoutingInstruction(result),
-            },
-            currentContext: {
-              workspaceId: result.category === 'work' ? 'work' : result.category === 'study' ? 'study' : 'personal',
-              // A work project is only selected when the classifier found a
-              // unique literal match. Otherwise the existing Context Boundary
-              // remains responsible for asking the Owner rather than guessing.
-              projectId: result.category === 'work' ? result.projectId : null,
-            },
-          };
+        const isPublicRoom =
+          room?.id === 'room-public' ||
+          room?.chatRoomId === 'room-public' ||
+          context?.chatRoomId === 'room-public' ||
+          context?.currentContext?.workspaceId === 'public';
+
+        if (!isPublicRoom) {
+          return handler.call(this, req, res, next);
         }
+
+        const result = classifyPublicRequest(req.body?.message || '', context?.workProjects || []);
+        const routingInstruction = buildPublicRoutingInstruction(result);
+
+        req.body.context = {
+          ...context,
+          publicIntake: {
+            category: result.category,
+            confidence: result.confidence,
+            reason: result.reason,
+            projectId: result.projectId,
+            routingInstruction,
+          },
+          currentContext: {
+            workspaceId: result.category === 'work' ? 'work' : result.category === 'study' ? 'study' : 'personal',
+            // A work project is only selected when the classifier found a
+            // unique literal match. Otherwise the existing Context Boundary
+            // remains responsible for asking the Owner rather than guessing.
+            projectId: result.category === 'work' ? result.projectId : null,
+          },
+        };
+
+        // Keep the classifier result in the API response so the frontend can
+        // display the Manager's routing decision without needing a second LLM call.
+        const originalJson = res.json.bind(res);
+        res.json = (payload: any) => {
+          const routedPayload = { ...payload, publicIntake: req.body.context.publicIntake };
+          if (typeof routedPayload.finalSynthesisMarkdown === 'string') {
+            const label = result.category === 'work' ? '工作' : result.category === 'study' ? '課業' : '個人規劃';
+            const projectNote = result.projectId
+              ? `\n- 專案：已安全匹配既有專案（${result.projectId}）`
+              : result.category === 'work'
+                ? '\n- 專案：尚未指定，Manager 不會自行猜測專案'
+                : '';
+            routedPayload.finalSynthesisMarkdown =
+              `### 🧭 Manager 分流\n- 類別：**${label}**\n- 信心：**${result.confidence}**\n- 判斷：${result.reason}${projectNote}\n\n` +
+              routedPayload.finalSynthesisMarkdown;
+          }
+          return originalJson(routedPayload);
+        };
+
         return handler.call(this, req, res, next);
       };
     });
