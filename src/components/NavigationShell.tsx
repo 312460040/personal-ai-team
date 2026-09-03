@@ -39,6 +39,10 @@ export default function NavigationShell({ activeTab, onTabChange, onClearDemoDat
           <div className="relative w-9 h-9 rounded-xl bg-[#385244] flex items-center justify-center text-white"><Bot className="w-5 h-5" /><span className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 rounded-full bg-[#6E9A79] ring-2 ring-[#FDFCFB]" /></div>
           <div className="hidden sm:block"><div className="text-sm font-bold text-[#2D322E]">Personal AI Team</div><div className="text-[10px] text-[#737A75]">Personal AI Workspace</div></div>
         </button>
+        <nav className="hidden md:flex items-center gap-1 ml-2" aria-label="主要頁面">
+          <button onClick={() => navigate('home')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${activeTab === 'home' ? 'bg-[#E8EFEB] text-[#385244]' : 'text-[#666D68] hover:bg-[#F0EEE9]'}`}><House className="w-3.5 h-3.5" />首頁</button>
+          <button onClick={() => navigate('chat')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${activeTab === 'chat' ? 'bg-[#E8EFEB] text-[#385244]' : 'text-[#666D68] hover:bg-[#F0EEE9]'}`}><Bot className="w-3.5 h-3.5" />Manager 對話</button>
+        </nav>
         <button onClick={onOpenManagerStatus} className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#DDE5DF] bg-[#F7FAF8] text-xs text-[#385244] hover:bg-[#EEF4F0]" title="查看 Manager 狀態">
           <span className="w-1.5 h-1.5 rounded-full bg-[#6E9A79]" /> Manager Online
         </button>
