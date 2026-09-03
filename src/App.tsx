@@ -10,6 +10,7 @@ import { WorkView } from './components/WorkView';
 import { StudyView } from './components/StudyView';
 import { TodayView } from './components/TodayView';
 import { AgentRegistryModal } from './components/AgentRegistryModal';
+import DatabaseView from './components/DatabaseView';
 import { AGENT_REGISTRY } from './data/agentRegistry';
 import { AppDataProvider, useAppData } from './context/AppDataContext';
 import { analyzeManagerState } from './engines/managerEngine';
@@ -17,9 +18,10 @@ import { buildNotifications } from './engines/notificationEngine';
 import type { AppNotification } from './engines/notificationEngine';
 
 const NOTIFICATION_KEY = 'ait_notifications_v1';
+type ActiveTab = 'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents' | 'database';
 
 function AppMainContent() {
-  const [activeTab, setActiveTab] = useState<'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents'>('home');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [isAgentsModalOpen, setIsAgentsModalOpen] = useState(false);
   const [isManagerStatusOpen, setIsManagerStatusOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>(() => { try { return JSON.parse(localStorage.getItem(NOTIFICATION_KEY) || '[]'); } catch { return []; } });
@@ -30,7 +32,6 @@ function AppMainContent() {
   const workPendingCount = workTasks.filter(t => t.status !== 'completed').length;
   const studyPendingCount = studyTasks.filter(t => t.status !== 'completed').length;
   const managerAnalysis = useMemo(() => analyzeManagerState({ workTasks, studyTasks, todayBlocks }), [workTasks, studyTasks, todayBlocks]);
-
   useEffect(() => { localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(notifications)); }, [notifications]);
   useEffect(() => { const next = buildNotifications(managerAnalysis, workTasks, studyTasks, notifications); const changed = next.length !== notifications.length || next.some((item, index) => item.id !== notifications[index]?.id || item.read !== notifications[index]?.read); if (changed) setNotifications(next); }, [managerAnalysis, workTasks, studyTasks]);
   const markNotificationRead = (id: string) => setNotifications(prev => prev.map(item => item.id === id ? { ...item, read: true } : item));
@@ -45,6 +46,7 @@ function AppMainContent() {
       {activeTab === 'work' && <WorkView projects={workProjects} tasks={workTasks} onToggleTask={toggleWorkTask} onAddTask={addWorkTask} onUpdateTask={updateWorkTask} onDeleteTask={deleteWorkTask} onAddProject={addWorkProject} onUpdateProject={updateWorkProject} onDeleteProject={deleteWorkProject} onAskAgentAboutWork={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
       {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onAddSubject={addStudySubject} onUpdateSubject={updateStudySubject} onDeleteSubject={deleteStudySubject} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
       {activeTab === 'today' && <TodayView blocks={todayBlocks} onToggleBlock={toggleTodayBlock} onAddBlock={addTodayBlock} onAskManagerToReschedule={() => { setActiveTab('chat'); sendMessage('檢視我今天現有的工作與課業時間塊，幫我重新規劃最佳化時間分配。'); }} />}
+      {activeTab === 'database' && <DatabaseView />}
     </main>
     <AgentRegistryModal isOpen={isAgentsModalOpen} onClose={() => setIsAgentsModalOpen(false)} />
     <ManagerStatusDrawer isOpen={isManagerStatusOpen} onClose={() => setIsManagerStatusOpen(false)} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workPendingCount={workPendingCount} studyPendingCount={studyPendingCount} />
