@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AiTeamChat } from './components/AiTeamChat';
 import OwnerDashboard from './components/OwnerDashboard';
 import ManagerNextAction from './components/ManagerNextAction';
@@ -11,20 +11,37 @@ import { TodayView } from './components/TodayView';
 import { AgentRegistryModal } from './components/AgentRegistryModal';
 import { AGENT_REGISTRY } from './data/agentRegistry';
 import { AppDataProvider, useAppData } from './context/AppDataContext';
+import { analyzeManagerState } from './engines/managerEngine';
+import { buildNotifications } from './engines/notificationEngine';
+import type { AppNotification } from './engines/notificationEngine';
+
+const NOTIFICATION_KEY = 'ait_notifications_v1';
 
 function AppMainContent() {
   const [activeTab, setActiveTab] = useState<'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents'>('home');
   const [isAgentsModalOpen, setIsAgentsModalOpen] = useState(false);
   const [isManagerStatusOpen, setIsManagerStatusOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => { try { return JSON.parse(localStorage.getItem(NOTIFICATION_KEY) || '[]'); } catch { return []; } });
   const data = useAppData();
   const { workProjects, workTasks, studySubjects, studyTasks, todayBlocks, messages, activityLogs, isLoading, addWorkTask, updateWorkTask, deleteWorkTask, toggleWorkTask, addWorkProject, updateWorkProject, deleteWorkProject, addStudyTask, updateStudyTask, deleteStudyTask, toggleStudyTask, addStudySubject, updateStudySubject, deleteStudySubject, addTodayBlock, toggleTodayBlock, applyScheduleToToday, sendMessage, loadDemoData, clearDemoData, clearAllData } = data;
   const handleAskAgentFromTab = (prompt: string) => { setActiveTab('chat'); sendMessage(prompt); };
   const currentActiveAgents = ['manager', 'work', 'study'];
   const workPendingCount = workTasks.filter(t => t.status !== 'completed').length;
   const studyPendingCount = studyTasks.filter(t => t.status !== 'completed').length;
+  const managerAnalysis = useMemo(() => analyzeManagerState({ workTasks, studyTasks, todayBlocks }), [workTasks, studyTasks, todayBlocks]);
+
+  useEffect(() => { localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(notifications)); }, [notifications]);
+  useEffect(() => {
+    const next = buildNotifications(managerAnalysis, workTasks, studyTasks, notifications);
+    const changed = next.length !== notifications.length || next.some((item, index) => item.id !== notifications[index]?.id || item.read !== notifications[index]?.read);
+    if (changed) setNotifications(next);
+  }, [managerAnalysis, workTasks, studyTasks]);
+
+  const markNotificationRead = (id: string) => setNotifications(prev => prev.map(item => item.id === id ? { ...item, read: true } : item));
+  const markAllNotificationsRead = () => setNotifications(prev => prev.map(item => ({ ...item, read: true })));
 
   return <div className="min-h-screen bg-[#F8F7F4] text-[#2D322E] flex flex-col font-sans selection:bg-[#5C7C66]/20 selection:text-[#2D4835]">
-    <NavigationShell activeTab={activeTab} onTabChange={tab => tab === 'agents' ? setIsAgentsModalOpen(true) : setActiveTab(tab)} onLoadDemoData={() => { if (window.confirm('確定要載入 Demo 範例資料嗎？（這將重設為示範任務資料庫）')) loadDemoData(); }} onClearDemoData={() => { if (window.confirm('確定要清除所有示範資料嗎？（將完整保留你的真實資料）')) clearDemoData(); }} onClearAllData={() => { if (window.confirm('確定要清空共享資料庫以測試「查無資料」真實防捏造模式嗎？')) clearAllData(); }} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workTasksCount={workPendingCount} studyTasksCount={studyPendingCount} onOpenAgentsModal={() => setIsAgentsModalOpen(true)} onOpenManagerStatus={() => setIsManagerStatusOpen(true)} />
+    <NavigationShell activeTab={activeTab} onTabChange={tab => tab === 'agents' ? setIsAgentsModalOpen(true) : setActiveTab(tab)} onLoadDemoData={() => { if (window.confirm('確定要載入 Demo 範例資料嗎？（這將重設為示範任務資料庫）')) loadDemoData(); }} onClearDemoData={() => { if (window.confirm('確定要清除所有示範資料嗎？（將完整保留你的真實資料）')) clearDemoData(); }} onClearAllData={() => { if (window.confirm('確定要清空共享資料庫以測試「查無資料」真實防捏造模式嗎？')) clearAllData(); }} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workTasksCount={workPendingCount} studyTasksCount={studyPendingCount} onOpenAgentsModal={() => setIsAgentsModalOpen(true)} onOpenManagerStatus={() => setIsManagerStatusOpen(true)} notifications={notifications} onReadNotification={markNotificationRead} onReadAllNotifications={markAllNotificationsRead} />
 
     <main className="flex-1 w-full pb-10">
       {activeTab === 'home' && <div className="mx-auto max-w-7xl px-2 sm:px-4 pt-6 space-y-6"><OwnerDashboard /><ManagerNextAction /></div>}
