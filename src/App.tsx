@@ -67,7 +67,7 @@ function AppMainContent() {
       </div>}
       {activeTab === 'activity' && <AgentActivityView activityLogs={activityLogs} onTriggerDemoFlow={() => { setActiveTab('chat'); sendMessage('幫我檢查目前有哪些工作需要優先處理？'); }} isLoading={isLoading} />}
       {activeTab === 'work' && <WorkView projects={workProjects} tasks={workTasks} onToggleTask={toggleWorkTask} onAddTask={addWorkTask} onUpdateTask={updateWorkTask} onDeleteTask={deleteWorkTask} onAddProject={addWorkProject} onUpdateProject={updateWorkProject} onDeleteProject={deleteWorkProject} onAskAgentAboutWork={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
-      {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onToggleTask={toggleStudyTask} onAddSubject={addStudySubject} onUpdateSubject={updateStudySubject} onDeleteSubject={deleteStudySubject} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
+      {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onAddSubject={addStudySubject} onUpdateSubject={updateStudySubject} onDeleteSubject={deleteStudySubject} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
       {activeTab === 'today' && <TodayView blocks={todayBlocks} onToggleBlock={toggleTodayBlock} onAddBlock={addTodayBlock} onAskManagerToReschedule={() => { setActiveTab('chat'); sendMessage('檢視我今天現有的工作與課業時間塊，幫我重新規劃最佳化時間分配。'); }} />}
       {activeTab === 'database' && <DatabaseView />}
     </main>
