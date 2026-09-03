@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChatWorkspace } from './components/ChatWorkspace';
-import { PublicIntakeChat } from './components/PublicIntakeChat';
+import { ManagerChecklist } from './components/ManagerChecklist';
 import OwnerDashboard from './components/OwnerDashboard';
 import ManagerNextAction from './components/ManagerNextAction';
 import ManagerSupervision from './components/ManagerSupervision';
@@ -34,14 +34,17 @@ function AppMainContent() {
     if (context) setCurrentContext({ workspaceId: context.workspaceId, projectId: context.projectId });
     sendMessage(text);
   };
-  const handlePublicIntakeSend = (text: string) => {
-    setCurrentContext({ workspaceId: 'public', projectId: null });
-    sendMessage(text);
-  };
   const currentActiveAgents = ['manager', 'work', 'study'];
   const workPendingCount = workTasks.filter(t => t.status !== 'completed').length;
   const studyPendingCount = studyTasks.filter(t => t.status !== 'completed').length;
   const managerAnalysis = useMemo(() => analyzeManagerState({ workTasks, studyTasks, todayBlocks }), [workTasks, studyTasks, todayBlocks]);
+  const checklistMode = useMemo<'daily-review' | 'tomorrow-plan' | null>(() => {
+    const latestUser = [...messages].reverse().find(m => m.sender === 'user');
+    if (!latestUser) return null;
+    if (/每日覆盤|今日覆盤|今天覆盤|回顧今天|今日回顧|每天覆盤|日終覆盤/i.test(latestUser.text)) return 'daily-review';
+    if (/隔日規劃|明日規劃|明天規劃|安排明天|規劃明天|明日安排|明天安排/i.test(latestUser.text)) return 'tomorrow-plan';
+    return null;
+  }, [messages]);
   useEffect(() => { localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(notifications)); }, [notifications]);
   useEffect(() => { const next = buildNotifications(managerAnalysis, workTasks, studyTasks, notifications); const changed = next.length !== notifications.length || next.some((item, index) => item.id !== notifications[index]?.id || item.read !== notifications[index]?.read); if (changed) setNotifications(next); }, [managerAnalysis, workTasks, studyTasks]);
   const markNotificationRead = (id: string) => setNotifications(prev => prev.map(item => item.id === id ? { ...item, read: true } : item));
@@ -52,12 +55,19 @@ function AppMainContent() {
     <main className="flex-1 w-full pb-10">
       {activeTab === 'home' && <div className="mx-auto max-w-7xl px-2 sm:px-4 pt-6 space-y-6"><OwnerDashboard /><ManagerSupervision /><ManagerNextAction /></div>}
       {activeTab === 'chat' && <div className="mx-auto max-w-7xl px-2 sm:px-4 pt-3 space-y-3">
-        <PublicIntakeChat onSend={handlePublicIntakeSend} isLoading={isLoading} workTasks={workTasks} studyTasks={studyTasks} />
+        {checklistMode && (
+          <ManagerChecklist
+            mode={checklistMode}
+            workTasks={workTasks}
+            studyTasks={studyTasks}
+            onConfirm={(message) => sendMessage(message)}
+          />
+        )}
         <ChatWorkspace messages={messages} onSendMessage={handleChatSend} isLoading={isLoading} onApplyScheduleToToday={applyScheduleToToday} currentActiveAgents={currentActiveAgents} agentRegistry={AGENT_REGISTRY} />
       </div>}
       {activeTab === 'activity' && <AgentActivityView activityLogs={activityLogs} onTriggerDemoFlow={() => { setActiveTab('chat'); sendMessage('幫我檢查目前有哪些工作需要優先處理？'); }} isLoading={isLoading} />}
       {activeTab === 'work' && <WorkView projects={workProjects} tasks={workTasks} onToggleTask={toggleWorkTask} onAddTask={addWorkTask} onUpdateTask={updateWorkTask} onDeleteTask={deleteWorkTask} onAddProject={addWorkProject} onUpdateProject={updateWorkProject} onDeleteProject={deleteWorkProject} onAskAgentAboutWork={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
-      {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onAddSubject={addStudySubject} onUpdateSubject={updateStudySubject} onDeleteSubject={deleteStudySubject} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
+      {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onToggleTask={toggleStudyTask} onAddSubject={addStudySubject} onUpdateSubject={updateStudySubject} onDeleteSubject={deleteStudySubject} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
       {activeTab === 'today' && <TodayView blocks={todayBlocks} onToggleBlock={toggleTodayBlock} onAddBlock={addTodayBlock} onAskManagerToReschedule={() => { setActiveTab('chat'); sendMessage('檢視我今天現有的工作與課業時間塊，幫我重新規劃最佳化時間分配。'); }} />}
       {activeTab === 'database' && <DatabaseView />}
     </main>
