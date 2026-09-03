@@ -20,6 +20,12 @@ export function usePlanManager(input: { workProjects: WorkProject[]; workTasks: 
     return plan;
   }, [input.workProjects]);
 
+  const ensurePlanForTask = useCallback((task: WorkTask | StudyTask, objective?: string) => {
+    const existing = plans.find(plan => plan.sourceTaskId === task.id && plan.status !== 'completed');
+    if (existing) return { plan: existing, created: false };
+    return { plan: createPlanForTask(task, objective), created: true };
+  }, [plans, createPlanForTask]);
+
   const start = useCallback((planId: string, stepId: string) => {
     const plan = plans.find(p => p.id === planId); const state = executionStates[planId];
     if (!plan || !state) return false;
@@ -40,5 +46,5 @@ export function usePlanManager(input: { workProjects: WorkProject[]; workTasks: 
 
   const activePlans = useMemo(() => plans.filter(p => p.status !== 'completed'), [plans]);
   const nextActions = useMemo(() => activePlans.map(plan => ({ plan, state: executionStates[plan.id], nextStep: executionStates[plan.id] ? getNextReadyStep(plan, executionStates[plan.id]) : undefined })), [activePlans, executionStates]);
-  return { plans, executionStates, activePlans, nextActions, createPlanForTask, start, complete };
+  return { plans, executionStates, activePlans, nextActions, createPlanForTask, ensurePlanForTask, start, complete };
 }
