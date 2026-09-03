@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Bot, Briefcase, GraduationCap, CalendarDays, Activity, Users, RotateCcw, Trash2, Database, Bell, Menu, X } from 'lucide-react';
+import { Bot, Briefcase, GraduationCap, CalendarDays, Activity, Users, RotateCcw, Trash2, Database, Bell, Menu, X, House } from 'lucide-react';
 
 interface Props {
-  activeTab: 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents';
-  onTabChange: (tab: 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents') => void;
+  activeTab: 'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents';
+  onTabChange: (tab: 'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents') => void;
   onClearDemoData: () => void;
   onLoadDemoData: () => void;
   onClearAllData: () => void;
@@ -16,7 +16,8 @@ interface Props {
 }
 
 const items = [
-  { id: 'chat' as const, label: 'AI 對話總管', icon: Bot },
+  { id: 'home' as const, label: '首頁總覽', icon: House },
+  { id: 'chat' as const, label: 'Manager 對話', icon: Bot },
   { id: 'activity' as const, label: '協作動態', icon: Activity },
   { id: 'work' as const, label: 'Work', icon: Briefcase },
   { id: 'study' as const, label: 'Study', icon: GraduationCap },
@@ -34,9 +35,9 @@ export default function NavigationShell({ activeTab, onTabChange, onClearDemoDat
     <header className="sticky top-0 z-40 w-full border-b border-[#E5E2DC] bg-[#FDFCFB]/95 backdrop-blur-md">
       <div className="h-16 px-3 sm:px-5 flex items-center gap-3">
         <button onClick={() => setOpen(true)} className="p-2.5 rounded-xl hover:bg-[#F0EEE9] text-[#4E5850]" aria-label="開啟側欄"><Menu className="w-5 h-5" /></button>
-        <button onClick={() => navigate('chat')} className="flex items-center gap-2.5 text-left">
+        <button onClick={() => navigate('home')} className="flex items-center gap-2.5 text-left">
           <div className="relative w-9 h-9 rounded-xl bg-[#385244] flex items-center justify-center text-white"><Bot className="w-5 h-5" /><span className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 rounded-full bg-[#6E9A79] ring-2 ring-[#FDFCFB]" /></div>
-          <div className="hidden sm:block"><div className="text-sm font-bold text-[#2D322E]">Personal AI Team</div><div className="text-[10px] text-[#737A75]">Manager Agent 總管</div></div>
+          <div className="hidden sm:block"><div className="text-sm font-bold text-[#2D322E]">Personal AI Team</div><div className="text-[10px] text-[#737A75]">Personal AI Workspace</div></div>
         </button>
         <button onClick={onOpenManagerStatus} className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#DDE5DF] bg-[#F7FAF8] text-xs text-[#385244] hover:bg-[#EEF4F0]" title="查看 Manager 狀態">
           <span className="w-1.5 h-1.5 rounded-full bg-[#6E9A79]" /> Manager Online
