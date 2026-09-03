@@ -46,17 +46,12 @@ export async function classifyPublicRequest(message: string, workProjects: any[]
     ? `${base.reason}${projectId ? `，並唯一匹配使用者專案「${workProjects.find((p) => p.id === projectId)?.title || projectId}」` : '；目前沒有安全可唯一匹配的專案'}`
     : base.reason;
 
-  return {
-    ...base,
-    reason,
-    projectId,
-  };
+  return { ...base, reason, projectId };
 }
 
 async function classifyWithManagerAI(message: string): Promise<Omit<PublicIntakeResult, 'projectId' | 'method'> | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || !message) return null;
-
   try {
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
@@ -77,19 +72,12 @@ async function classifyWithManagerAI(message: string): Promise<Omit<PublicIntake
 
 使用者訊息：${JSON.stringify(message)}`,
     });
-
     const raw = String(response.text || '').trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
     const parsed = JSON.parse(raw);
     if (!['work', 'study', 'personal'].includes(parsed.category)) return null;
     if (!['high', 'medium', 'low'].includes(parsed.confidence)) return null;
     if (typeof parsed.reason !== 'string' || !parsed.reason.trim()) return null;
-
-    return {
-      category: parsed.category,
-      confidence: parsed.confidence,
-      reason: parsed.reason.trim(),
-      method: 'ai',
-    };
+    return { category: parsed.category, confidence: parsed.confidence, reason: parsed.reason.trim(), method: 'ai' };
   } catch (error) {
     console.warn('[Public Intake] Manager AI classification failed; using rule fallback.', error);
     return null;
@@ -101,7 +89,6 @@ function classifyWithRules(message: string): Omit<PublicIntakeResult, 'projectId
   const study = /課業|作業|考試|考前|複習|讀書|念書|學習|科目|上課|教材|考題|學分|期中|期末|論文|文獻|研究|研究方法|paper|study|exam|review/i.test(text);
   const personal = /生活|個人|私人|休息|睡眠|運動|健身|吃飯|飲食|旅行|旅遊|約會|家庭|家裡|購物|採買|習慣|目標|時間安排|日程|行程/i.test(text);
   const work = /工作|公司|客戶|主管|老闆|同事|專案|提案|簡報|行銷|企劃|社群|粉專|廣告|影片|短影音|開發|程式|程式碼|bug|api|PR|commit|部署|上線|會議|業務|職場|work|project/i.test(text);
-
   if (work && !study) return { category: 'work', confidence: 'medium', reason: 'AI 分類服務暫不可用，依工作語意規則判斷。', method: 'rule_fallback' };
   if (study && !work) return { category: 'study', confidence: 'medium', reason: 'AI 分類服務暫不可用，依課業／研究語意規則判斷。', method: 'rule_fallback' };
   if (personal && !work && !study) return { category: 'personal', confidence: 'medium', reason: 'AI 分類服務暫不可用，依個人規劃語意規則判斷。', method: 'rule_fallback' };
