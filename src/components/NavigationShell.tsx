@@ -12,6 +12,7 @@ interface Props {
   workTasksCount: number;
   studyTasksCount: number;
   onOpenAgentsModal: () => void;
+  onOpenManagerStatus: () => void;
 }
 
 const items = [
@@ -22,7 +23,7 @@ const items = [
   { id: 'today' as const, label: 'Today', icon: CalendarDays },
 ];
 
-export default function NavigationShell({ activeTab, onTabChange, onClearDemoData, onLoadDemoData, onClearAllData, activeAgentsCount, totalAgentsCount, workTasksCount, studyTasksCount, onOpenAgentsModal }: Props) {
+export default function NavigationShell({ activeTab, onTabChange, onClearDemoData, onLoadDemoData, onClearAllData, activeAgentsCount, totalAgentsCount, workTasksCount, studyTasksCount, onOpenAgentsModal, onOpenManagerStatus }: Props) {
   const [open, setOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
@@ -36,6 +37,9 @@ export default function NavigationShell({ activeTab, onTabChange, onClearDemoDat
         <button onClick={() => navigate('chat')} className="flex items-center gap-2.5 text-left">
           <div className="relative w-9 h-9 rounded-xl bg-[#385244] flex items-center justify-center text-white"><Bot className="w-5 h-5" /><span className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 rounded-full bg-[#6E9A79] ring-2 ring-[#FDFCFB]" /></div>
           <div className="hidden sm:block"><div className="text-sm font-bold text-[#2D322E]">Personal AI Team</div><div className="text-[10px] text-[#737A75]">Manager Agent 總管</div></div>
+        </button>
+        <button onClick={onOpenManagerStatus} className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#DDE5DF] bg-[#F7FAF8] text-xs text-[#385244] hover:bg-[#EEF4F0]" title="查看 Manager 狀態">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#6E9A79]" /> Manager Online
         </button>
         <div className="flex-1" />
         <div className="relative">
@@ -51,6 +55,7 @@ export default function NavigationShell({ activeTab, onTabChange, onClearDemoDat
             </div>
           </div>}
         </div>
+        <button onClick={onOpenManagerStatus} className="flex md:hidden items-center gap-1.5 p-2 rounded-lg hover:bg-[#F0EEE9] text-[#4E5850]" aria-label="Manager 狀態"><Bot className="w-4 h-4" /></button>
         <button onClick={onOpenAgentsModal} className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-[#DDD8CE] text-xs text-[#4A504B]"><Users className="w-3.5 h-3.5 text-[#4E6B56]" />AI Team <span className="px-1.5 rounded bg-[#EBF1EC] text-[#2D4835] font-mono text-[10px]">{activeAgentsCount}/{totalAgentsCount}</span></button>
         <div className="relative hidden sm:block">
           <button onClick={() => setDataOpen(v => !v)} className="p-2 rounded-lg hover:bg-[#F0EEE9] text-[#68716A]" title="資料管理"><Database className="w-4 h-4" /></button>
@@ -66,6 +71,7 @@ export default function NavigationShell({ activeTab, onTabChange, onClearDemoDat
           <div className="px-3 pt-2 pb-2 text-[10px] font-bold uppercase tracking-widest text-[#9A9F9B]">Workspace</div>
           {items.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => navigate(id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm ${activeTab === id ? 'bg-[#E8EFEB] text-[#385244] font-semibold' : 'text-[#555D57] hover:bg-[#F3F1ED]'}`}><Icon className="w-4 h-4" /><span>{label}</span>{id === 'work' && workTasksCount > 0 && <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-[#EFECE5]">{workTasksCount}</span>}{id === 'study' && studyTasksCount > 0 && <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-[#EFECE5]">{studyTasksCount}</span>}</button>)}
           <div className="my-3 border-t border-[#EBE8E1]" />
+          <button onClick={() => { setOpen(false); onOpenManagerStatus(); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#555D57] hover:bg-[#F3F1ED]"><Bot className="w-4 h-4 text-[#385244]" /><span>Manager 狀態</span><span className="ml-auto text-[10px] text-[#4E6B56]">Online</span></button>
           <button onClick={() => { setOpen(false); onOpenAgentsModal(); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#555D57] hover:bg-[#F3F1ED]"><Users className="w-4 h-4" /><span>AI 團隊成員</span><span className="ml-auto text-[10px]">{activeAgentsCount}/{totalAgentsCount}</span></button>
           <button onClick={() => { setOpen(false); setNoticeOpen(true); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#555D57] hover:bg-[#F3F1ED]"><Bell className="w-4 h-4" /><span>通知</span>{pending > 0 && <span className="ml-auto min-w-5 text-center text-[10px] font-bold text-[#B36534]">{pending}</span>}</button>
         </div>
