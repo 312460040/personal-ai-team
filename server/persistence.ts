@@ -51,6 +51,51 @@ router.use(async (req, res, next) => {
   }
 });
 
+// Read-only database explorer. Keep this whitelist explicit: never expose arbitrary SQL/table access.
+const VIEWABLE_TABLES = [
+  'users',
+  'projects',
+  'tasks',
+  'conversations',
+  'work_records',
+  'memories',
+  'focus_sessions',
+  'calendar_events',
+  'diagnosis_records',
+  'adaptive_proposals',
+] as const;
+type ViewableTable = typeof VIEWABLE_TABLES[number];
+
+function isViewableTable(value: string): value is ViewableTable {
+  return (VIEWABLE_TABLES as readonly string[]).includes(value);
+}
+
+router.get('/tables', async (_req, res) => {
+  try {
+    const userId = res.locals.userId as string;
+    const results = await Promise.all(VIEWABLE_TABLES.map(async (table) => {
+      const rows = await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*`);
+      return { table, count: Array.isArray(rows) ? rows.length : 0 };
+    }));
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.get('/tables/:table', async (req, res) => {
+  const table = req.params.table;
+  if (!isViewableTable(table)) return res.status(400).json({ error: 'Table is not available in the read-only explorer' });
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const userId = res.locals.userId as string;
+    const rows = await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc&limit=${limit}`);
+    res.json({ table, rows: Array.isArray(rows) ? rows : [] });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 router.post('/conversations', async (req, res) => {
   try {
     const body = req.body || {};
@@ -87,11 +132,24 @@ router.post('/memories', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
 });
 
-router.post('/calendar-events', async (req, res) => {
+router.post('/memories/search', async (req, res) => {
   try {
     const body = req.body || {};
-    const from = body.from ? `&start_at=gte.${encodeURIComponent(body.from)}` : '';
-    const to = body.to ? `&end_at=lte.${encodeURIComponent(body.to)}` : '';
+    const domain = body.domain || 'global';
+    const project = body.projectId ? `&project_id=eq.${encodeURIComponent(body.projectId)}` : '';
+    const task = body.taskId ? `&task_id=eq.${encodeURIComponent(body.taskId)}` : '';
+    const queryText = String(body.query || '').trim();
+    const textFilter = queryText ? `&content=ilike.*${encodeURIComponent(queryText)}*` : '';
+    const query = `user_id=eq.${res.locals.userId}&domain=eq.${encodeURIComponent(domain)}${project}${task}${textFilter}&select=id,type,content,confidence,source,project_id,task_id,evidence_count,updated_at&order=updated_at.desc&limit=${Math.min(Number(body.limit) || 20, 100)}`;
+    const rows = await supabase(`memories?${query}`);
+    res.json(rows || []);
+  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
+
+router.get('/calendar-events', async (req, res) => {
+  try {
+    const from = req.query.from ? `&start_at=gte.${encodeURIComponent(String(req.query.from))}` : '';
+    const to = req.query.to ? `&end_at=lte.${encodeURIComponent(String(req.query.to))}` : '';
     const rows = await supabase(`calendar_events?user_id=eq.${res.locals.userId}${from}${to}&select=id,title,start_at,end_at,calendar_id,status&order=start_at.asc&limit=200`);
     res.json((rows || []).map((row: any) => ({ id: row.id, title: row.title, startAt: row.start_at, endAt: row.end_at, calendarId: row.calendar_id, status: row.status })));
   } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
