@@ -29,7 +29,7 @@ if (typeof window !== 'undefined' && API_BASE_URL) {
     }
     if (input instanceof Request && new URL(input.url).pathname.startsWith('/api/')) {
       const url = new URL(input.url);
-      return originalFetch(apiUrl(`${url.pathname}${url.search}`), init || input);
+      return originalFetch(new Request(apiUrl(`${url.pathname}${url.search}`), input));
     }
     return originalFetch(input, init);
   };
