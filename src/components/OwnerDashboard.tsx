@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAppData } from '../context/AppDataContext';
 import { analyzeManagerState } from '../engines/managerEngine';
 import type { RescheduleProposal } from '../engines/managerEngine';
-import { analyzeAdaptivePatterns } from '../engines/adaptiveEngine';
 import { calculateFocusMetrics, createFocusSession, finishFocusSession, getElapsedMinutes, shouldManagerInterrupt } from '../engines/focusEngine';
 import type { FocusSession } from '../engines/focusEngine';
 import { consolidateMemories, createMemory } from '../engines/memoryEngine';
 import type { ManagerMemory } from '../engines/memoryEngine';
+import { diagnoseBehavior } from '../engines/diagnosisEngine';
+import { buildAdaptiveProposals } from '../engines/adaptivePlanningEngine';
 
 const insightStyles = { danger: 'border-red-200 bg-red-50', warning: 'border-amber-200 bg-amber-50', normal: 'border-emerald-200 bg-emerald-50' };
 const FOCUS_KEY = 'ait_focus_sessions_v1';
@@ -19,15 +20,15 @@ const OwnerDashboard: React.FC = () => {
   const [elapsed, setElapsed] = useState(0);
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [memories, setMemories] = useState<ManagerMemory[]>(() => { try { return JSON.parse(localStorage.getItem(MEMORY_KEY) || '[]'); } catch { return []; } });
-
   const [nowTick, setNowTick] = useState(Date.now());
+
   useEffect(() => { const id = window.setInterval(() => setNowTick(Date.now()), 30000); return () => window.clearInterval(id); }, []);
   const now = useMemo(() => new Date(nowTick), [nowTick]);
-
   const managerAnalysis = useMemo(() => analyzeManagerState({ workTasks, studyTasks, todayBlocks, now }), [workTasks, studyTasks, todayBlocks, now]);
-  const adaptiveInsights = useMemo(() => analyzeAdaptivePatterns(workTasks, studyTasks, sessions), [workTasks, studyTasks, sessions]);
   const metrics = useMemo(() => calculateFocusMetrics(sessions), [sessions]);
-  const activeProposals = managerAnalysis.rescheduleProposals.filter((p) => !dismissed.includes(p.id));
+  const diagnosis = useMemo(() => diagnoseBehavior({ workTasks, studyTasks, focusSessions: sessions }), [workTasks, studyTasks, sessions]);
+  const adaptiveProposals = useMemo(() => buildAdaptiveProposals({ workTasks, studyTasks, focusSessions: sessions, memories }), [workTasks, studyTasks, sessions, memories]);
+  const activeProposals = managerAnalysis.rescheduleProposals.filter(p => !dismissed.includes(p.id));
 
   useEffect(() => { localStorage.setItem(FOCUS_KEY, JSON.stringify(sessions)); }, [sessions]);
   useEffect(() => { localStorage.setItem(MEMORY_KEY, JSON.stringify(memories)); }, [memories]);
@@ -97,7 +98,9 @@ const OwnerDashboard: React.FC = () => {
 
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-xl font-bold">🧠 Manager Engine</h2><div className="mt-5 grid gap-4 md:grid-cols-4"><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">待處理</p><p className="mt-1 text-2xl font-bold">{managerAnalysis.totalPendingTasks}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">已完成</p><p className="mt-1 text-2xl font-bold">{managerAnalysis.totalCompletedTasks}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">預估剩餘</p><p className="mt-1 text-2xl font-bold">{managerAnalysis.estimatedPendingHours}<span className="ml-1 text-sm">小時</span></p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Focus 累積</p><p className="mt-1 text-2xl font-bold">{metrics.totalMinutes}<span className="ml-1 text-sm">分</span></p></div></div></section>
 
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-500">Adaptive Engine</p><h2 className="mt-1 text-xl font-bold">🔄 從歷史行為調整未來規劃</h2></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs">{adaptiveInsights.length} 項發現</span></div>{adaptiveInsights.length === 0 ? <p className="mt-4 text-sm text-slate-500">目前資料不足，Manager 會在累積更多 Task 與 Focus 歷史後開始辨識模式。</p> : <div className="mt-4 space-y-3">{adaptiveInsights.map(x => <div key={x.id} className="rounded-xl bg-slate-50 p-4"><p className="font-semibold">{x.title}</p><p className="mt-1 text-sm text-slate-600">{x.description}</p></div>)}</div>}</section>
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-500">Diagnosis Engine</p><h2 className="mt-1 text-xl font-bold">🔍 Manager 正在分析工作模式</h2></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs">{diagnosis.length} 項診斷</span></div>{diagnosis.length === 0 ? <p className="mt-4 text-sm text-slate-500">目前沒有足夠的歷史資料形成診斷。繼續累積 Task 與 Focus 後，Manager 會自動分析。</p> : <div className="mt-4 space-y-3">{diagnosis.slice(0, 5).map(x => <div key={x.id} className="rounded-xl bg-slate-50 p-4"><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{x.title}</p><p className="mt-1 text-sm text-slate-600">{x.evidence}</p><p className="mt-2 text-sm">💡 {x.recommendation}</p></div><span className="shrink-0 text-xs text-slate-400">信心 {Math.round(x.confidence * 100)}%</span></div></div>)}</div>}</section>
+
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-500">Adaptive Planning Engine</p><h2 className="mt-1 text-xl font-bold">🔄 用歷史行為調整下一次規劃</h2></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs">{adaptiveProposals.length} 項建議</span></div>{adaptiveProposals.length === 0 ? <p className="mt-4 text-sm text-slate-500">目前沒有需要調整的規劃。Manager 會根據新的 Focus、延遲任務與 Memory 持續重新評估。</p> : <div className="mt-4 space-y-3">{adaptiveProposals.map(x => <div key={x.id} className="rounded-xl bg-slate-50 p-4"><div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{x.title}</p><p className="mt-1 text-sm text-slate-600">{x.reason}</p><p className="mt-2 text-sm">🎯 {x.suggestedAction}</p></div><span className="shrink-0 text-xs text-slate-400">信心 {Math.round(x.confidence * 100)}%</span></div></div>)}</div>}</section>
 
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h2 className="text-xl font-bold">🧠 Personal Manager Memory</h2><span className="text-xs text-slate-500">最近 {memories.length} 筆</span></div>{memories.length === 0 ? <p className="mt-4 text-sm text-slate-500">Manager 尚未累積 Owner 決策或 Focus 行為。</p> : <div className="mt-4 max-h-56 space-y-2 overflow-auto">{memories.slice(0, 8).map(item => <div key={item.id} className="rounded-lg bg-slate-50 p-3"><div className="flex justify-between"><span className="text-xs font-semibold uppercase text-slate-400">{item.type}</span><span className="text-xs text-slate-400">信心 {Math.round(item.confidence * 100)}%</span></div><p className="mt-1 text-sm text-slate-600">{item.content}</p></div>)}</div>}</section>
 
