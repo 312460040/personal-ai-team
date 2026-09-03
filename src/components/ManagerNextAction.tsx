@@ -16,6 +16,7 @@ const MEMORY_KEY = 'ait_manager_memories_v2';
 const AUTO_PLAN_KEY = 'ait_manager_auto_plan_v1';
 const REMINDER_KEY = 'ait_manager_execution_reminder_v1';
 const FOCUS_CHANGED_EVENT = 'ait:focus-changed';
+const REMINDER_GRACE_MINUTES = 10;
 
 function deadlineValue(deadline?: string) {
   if (!deadline) return Number.MAX_SAFE_INTEGER;
@@ -29,18 +30,23 @@ function saveActiveFocus(session: FocusSession | null) { if (session) localStora
 function appendFinishedFocus(session: FocusSession) { try { const current = JSON.parse(localStorage.getItem(FOCUS_KEY) || '[]') as FocusSession[]; localStorage.setItem(FOCUS_KEY, JSON.stringify([session, ...current].slice(0, 100))); } catch { localStorage.setItem(FOCUS_KEY, JSON.stringify([session])); } }
 function loadMemories(): ManagerMemory[] { try { return JSON.parse(localStorage.getItem(MEMORY_KEY) || '[]'); } catch { return []; } }
 
+type ReminderState = { taskId: string; blockId: string; remindedAt: number; followUpSent: boolean };
+function loadReminder(): ReminderState | null { try { const raw = localStorage.getItem(REMINDER_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; } }
+function saveReminder(value: ReminderState | null) { if (value) localStorage.setItem(REMINDER_KEY, JSON.stringify(value)); else localStorage.removeItem(REMINDER_KEY); }
+
 const ManagerNextAction: React.FC = () => {
   const { workProjects, workTasks, studyTasks, todayBlocks, currentContext } = useAppData();
   const planManager = usePlanManager({ workProjects, workTasks, studyTasks, todayBlocks });
   const [activeFocus, setActiveFocus] = useState<FocusSession | null>(() => loadActiveFocus());
   const [elapsed, setElapsed] = useState(0);
-  const [memories] = useState<ManagerMemory[]>(() => loadMemories());
+  const [memories, setMemories] = useState<ManagerMemory[]>(() => loadMemories());
   const [nowTick, setNowTick] = useState(Date.now());
   const [autoPlanMessage, setAutoPlanMessage] = useState<string | null>(null);
   const [reminder, setReminder] = useState<string | null>(null);
 
   useEffect(() => { const id = window.setInterval(() => setNowTick(Date.now()), 30000); return () => window.clearInterval(id); }, []);
-  useEffect(() => { const sync = () => setActiveFocus(loadActiveFocus()); window.addEventListener(FOCUS_CHANGED_EVENT, sync); window.addEventListener('storage', sync); return () => { window.removeEventListener(FOCUS_CHANGED_EVENT, sync); window.removeEventListener('storage', sync); }; }, []);
+  useEffect(() => { localStorage.setItem(MEMORY_KEY, JSON.stringify(memories)); }, [memories]);
+  useEffect(() => { const sync = () => { setActiveFocus(loadActiveFocus()); setMemories(loadMemories()); }; window.addEventListener(FOCUS_CHANGED_EVENT, sync); window.addEventListener('storage', sync); return () => { window.removeEventListener(FOCUS_CHANGED_EVENT, sync); window.removeEventListener('storage', sync); }; }, []);
   useEffect(() => { if (!activeFocus) { setElapsed(0); return; } const tick = () => setElapsed(getElapsedMinutes(activeFocus)); tick(); const id = window.setInterval(tick, 1000); return () => window.clearInterval(id); }, [activeFocus]);
 
   const scopedWorkTasks = useMemo(() => workTasks.filter(task => isPending(task) && task.workspaceId === currentContext.workspaceId && task.projectId === currentContext.projectId), [workTasks, currentContext]);
@@ -49,6 +55,7 @@ const ManagerNextAction: React.FC = () => {
   const sessions = useMemo(() => { try { return JSON.parse(localStorage.getItem(FOCUS_KEY) || '[]') as FocusSession[]; } catch { return []; } }, [nowTick, activeFocus]);
   const diagnosis = useMemo(() => diagnoseBehavior({ workTasks: scopedWorkTasks, studyTasks: scopedStudyTasks, focusSessions: sessions }), [scopedWorkTasks, scopedStudyTasks, sessions]);
   const adaptive = useMemo(() => buildAdaptiveProposals({ workTasks: scopedWorkTasks, studyTasks: scopedStudyTasks, focusSessions: sessions, memories }), [scopedWorkTasks, scopedStudyTasks, sessions, memories]);
+
   const candidate = useMemo<WorkTask | StudyTask | undefined>(() => [...candidateTasks].sort((a, b) => {
     const riskA = diagnosis.some(x => x.level === 'danger' && x.id.includes(a.id)) ? 1 : 0;
     const riskB = diagnosis.some(x => x.level === 'danger' && x.id.includes(b.id)) ? 1 : 0;
@@ -74,19 +81,37 @@ const ManagerNextAction: React.FC = () => {
 
   const executionDecision = useMemo(() => candidate ? decideNextExecution({ task: candidate, plan: current?.plan, state: current?.state, todayBlocks, now: new Date(nowTick), activeFocus: Boolean(activeFocus) }) : undefined, [candidate, current, todayBlocks, nowTick, activeFocus]);
 
+  // Manager 追蹤「已到適合時段但尚未開始」：第一次提醒後，持續觀察；超過寬限時間仍沒有 Focus，再給一次進度提醒。
   useEffect(() => {
-    if (!candidate || !executionDecision || activeFocus || executionDecision.action !== 'start-now') return;
-    const blockId = executionDecision.block?.id ?? 'no-block';
-    const marker = `${candidate.id}:${blockId}`;
-    if (localStorage.getItem(REMINDER_KEY) === marker) return;
-    localStorage.setItem(REMINDER_KEY, marker);
-    setReminder(`現在是適合處理「${candidate.title}」的時間。Manager 建議開始下一步：${executionDecision.step?.title ?? '執行目前計畫'}。`);
-  }, [candidate, executionDecision, activeFocus]);
+    if (!candidate || !executionDecision || activeFocus || executionDecision.action !== 'start-now' || !executionDecision.block) return;
+    const blockId = executionDecision.block.id;
+    const existing = loadReminder();
+    const markerMatches = existing?.taskId === candidate.id && existing.blockId === blockId;
+    const now = Date.now();
+    if (!markerMatches) {
+      saveReminder({ taskId: candidate.id, blockId, remindedAt: now, followUpSent: false });
+      setReminder(`現在是適合處理「${candidate.title}」的時間。Manager 建議開始下一步：${executionDecision.step?.title ?? '執行目前計畫'}。`);
+      return;
+    }
+    if (existing && !existing.followUpSent && now - existing.remindedAt >= REMINDER_GRACE_MINUTES * 60 * 1000) {
+      saveReminder({ ...existing, followUpSent: true });
+      setReminder(`你還沒有開始「${candidate.title}」。Manager 發現已經延遲約 ${REMINDER_GRACE_MINUTES} 分鐘，建議現在開始；如果遇到問題，可以直接告訴 Manager。`);
+    }
+  }, [candidate, executionDecision, activeFocus, nowTick]);
+
+  useEffect(() => {
+    if (activeFocus || executionDecision?.action !== 'start-now') {
+      if (activeFocus || executionDecision?.action !== 'start-now') {
+        setReminder(null);
+        if (activeFocus || executionDecision?.action !== 'start-now') saveReminder(null);
+      }
+    }
+  }, [activeFocus, executionDecision?.action]);
 
   const createPlan = () => { if (candidate) planManager.createPlanForTask(candidate); };
   const formatMinutes = (hours: number) => { const minutes = Math.round(hours * 60); return minutes >= 60 ? `${Math.floor(minutes / 60)} 小時 ${minutes % 60 ? `${minutes % 60} 分` : ''}`.trim() : `${minutes} 分鐘`; };
   const stepStatus = (step: ExecutionPlanStep, state?: { runningStepId?: string; completedStepIds: string[] }) => { if (!state) return 'ready'; if (state.completedStepIds.includes(step.id)) return 'completed'; if (state.runningStepId === step.id) return 'running'; return step.dependsOn.every(id => state.completedStepIds.includes(id)) ? 'ready' : 'locked'; };
-  const startStep = (planId: string, step: ExecutionPlanStep) => { if (activeFocus) { window.alert(`目前已有 Focus：「${activeFocus.taskTitle}」，請先完成或結束目前工作。`); return; } const started = planManager.start(planId, step.id); if (!started) return; const session = createFocusSession({ taskId: step.id, taskTitle: step.title, plannedMinutes: Math.max(1, Math.round(step.estimatedHours * 60)) }); saveActiveFocus(session); setActiveFocus(session); };
+  const startStep = (planId: string, step: ExecutionPlanStep) => { if (activeFocus) { window.alert(`目前已有 Focus：「${activeFocus.taskTitle}」，請先完成或結束目前工作。`); return; } const started = planManager.start(planId, step.id); if (!started) return; const session = createFocusSession({ taskId: step.id, taskTitle: step.title, plannedMinutes: Math.max(1, Math.round(step.estimatedHours * 60)) }); saveActiveFocus(session); setActiveFocus(session); setReminder(null); saveReminder(null); };
   const completeStep = (planId: string, step: ExecutionPlanStep) => { const completed = planManager.complete(planId, step.id); if (!completed) return; if (activeFocus?.taskId === step.id) { const finished = finishFocusSession(activeFocus, { completed: true }); appendFinishedFocus(finished); saveActiveFocus(null); setActiveFocus(null); } };
 
   return <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
