@@ -1,12 +1,6 @@
 import type { StructuredTimeBlock } from '../types';
 
-type PlannedTask = {
-  id: string;
-  title: string;
-  category: 'work' | 'study';
-  priority?: 'high' | 'medium' | 'low';
-  estimatedHours?: number;
-};
+type PlannedTask = { id: string; title: string; category: 'work' | 'study'; priority?: 'high' | 'medium' | 'low'; estimatedHours?: number };
 
 const inferSteps = (title: string, category: 'work' | 'study'): string[] => {
   if (category === 'work') {
@@ -19,23 +13,21 @@ const inferSteps = (title: string, category: 'work' | 'study'): string[] => {
   if (/(考試|複習|exam)/i.test(title)) return ['確認範圍', '整理重點', '練習題目', '錯題與弱點複習'];
   return ['確認學習目標', '理解核心內容', '練習與應用', '檢查理解程度'];
 };
-
 function priorityWeight(priority?: string) { return priority === 'high' ? 3 : priority === 'low' ? 1 : 2; }
-function parseClock(value: string) { const match = String(value || '').match(/(\d{1,2}):(\d{2})/); return match ? Number(match[1]) * 60 + Number(match[2]) : null; }
-function formatClock(minutes: number) { const h = Math.floor(minutes / 60) % 24; const m = minutes % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; }
+function parseClock(value: string) { const m = String(value || '').match(/(\d{1,2}):(\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
+function formatClock(minutes: number) { const h = Math.floor(minutes / 60) % 24; return `${String(h).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`; }
 
 function planBlocks(tasks: PlannedTask[], todayBlocks: any[]): StructuredTimeBlock[] {
   const busy: Array<[number, number]> = [];
   (Array.isArray(todayBlocks) ? todayBlocks : []).forEach((block: any) => {
-    const parts = String(block?.timeRange || block?.time || '').split(/\s*[-~–—]\s*/);
-    if (parts.length !== 2) return;
-    const start = parseClock(parts[0]); const end = parseClock(parts[1]);
-    if (start !== null && end !== null && end > start) busy.push([start, end]);
+    const p = String(block?.timeRange || block?.time || '').split(/\s*[-~–—]\s*/);
+    if (p.length !== 2) return;
+    const s = parseClock(p[0]); const e = parseClock(p[1]);
+    if (s !== null && e !== null && e > s) busy.push([s, e]);
   });
-  const ordered = [...tasks].sort((a, b) => priorityWeight(b.priority) - priorityWeight(a.priority));
   const result: StructuredTimeBlock[] = [];
   let cursor = 9 * 60;
-  ordered.forEach((task) => {
+  [...tasks].sort((a, b) => priorityWeight(b.priority) - priorityWeight(a.priority)).forEach((task) => {
     const duration = Math.max(30, Math.round((task.estimatedHours || 1) * 60));
     for (let minute = cursor; minute <= 21 * 60 - duration; minute += 15) {
       const end = minute + duration;
@@ -44,7 +36,7 @@ function planBlocks(tasks: PlannedTask[], todayBlocks: any[]): StructuredTimeBlo
         return s !== null && e !== null && minute < e && end > s;
       });
       if (conflict) continue;
-      result.push({ time: `${formatClock(minute)}-${formatClock(end)}`, type: task.category === 'work' ? 'work' : 'study', title: task.title, agentOwner: task.category === 'work' ? 'Work Agent' : 'Study Agent', duration: `${(duration / 60).toFixed(2).replace(/\.00$/, '')}h`, tips: 'Manager 依優先級、預估工時與既有時間塊提出建議；尚未寫入 Today。' } as StructuredTimeBlock);
+      result.push({ time: `${formatClock(minute)}-${formatClock(end)}`, type: task.category === 'work' ? 'work' : 'study', title: task.title, agentOwner: task.category === 'work' ? 'work' : 'study', duration: `${(duration / 60).toFixed(2).replace(/\.00$/, '')}h`, tips: 'Manager 依優先級、預估工時與既有時間塊提出建議；尚未寫入 Today。' } as StructuredTimeBlock);
       cursor = end + 15;
       break;
     }
@@ -56,7 +48,7 @@ function parseLocalArrangement(payload: any): PlannedTask[] {
   const text = String(payload?.finalSynthesisMarkdown || '');
   const tasks: PlannedTask[] = [];
   let category: 'work' | 'study' = 'work';
-  text.split('\n').forEach((line: string) => {
+  text.split('\n').forEach((line) => {
     if (/^####\s*💼/.test(line)) category = 'work';
     if (/^####\s*🎓/.test(line)) category = 'study';
     const match = line.match(/^-\s*\*\*(.+?)\*\*｜/);
@@ -67,14 +59,14 @@ function parseLocalArrangement(payload: any): PlannedTask[] {
   return tasks;
 }
 
-function planningMarkdown(tasks: PlannedTask[], blocks: StructuredTimeBlock[]) {
+function planningMarkdown(tasks: PlannedTask[], blocks: StructuredTimeBlock[], isFuture: boolean) {
   const lines = tasks.map((task) => {
     const label = task.category === 'work' ? '💼 工作' : '🎓 課業／研究';
     const steps = inferSteps(task.title, task.category);
-    return `#### ${label}｜${task.title}\n- 優先級：**${task.priority || 'medium'}**\n- 預估工時：**${task.estimatedHours || 1}h**\n- 執行步驟：${steps.map((s, i) => `${i + 1}. ${s}`).join(' → ')}`;
+    return `#### ${label}｜${task.title}\n- Manager 判定：**${task.priority || 'medium'} 優先**｜預估 **${task.estimatedHours || 1}h**\n- 執行拆解：${steps.map((s, i) => `${i + 1}. ${s}`).join(' → ')}`;
   }).join('\n\n');
-  const schedule = blocks.length ? blocks.map((b) => `- **${b.time}**｜${b.title}｜${b.agentOwner}`).join('\n') : '- 目前沒有可安全放入既有時間塊的空檔，Manager 會等待重新排程。';
-  return `### 🧠 Manager 主動規劃\n\nManager 已經替你完成 **理解 → 分類 → 優先級 → 執行拆解 → 時間配置**。\n\n${lines}\n\n### 🗓️ 建議執行時間\n${schedule}\n\n> 這是 Manager 的規劃提案；尚未直接修改 Today。`;
+  const schedule = blocks.length ? blocks.map((b) => `- **${b.time}**｜${b.title}｜${b.agentOwner === 'work' ? 'Work Agent' : 'Study Agent'}`).join('\n') : '- 目前沒有可安全配置的空檔，Manager 會等待重新排程。';
+  return `### 🧠 Manager 主動規劃\n\n我已替你完成 **理解 → 分類 → 優先級 → 執行拆解 → 時間配置**。${isFuture ? '這是明日／未來計畫，不會誤寫進今天。' : ''}\n\n${lines}\n\n### 🗓️ ${isFuture ? '建議執行時段' : '今日建議執行時間'}\n${schedule}\n\n> Manager 已完成規劃；涉及實際日程異動時，仍需 Owner 確認。`;
 }
 
 export function installManagerPlanningOverlay() {
@@ -98,9 +90,9 @@ export function installManagerPlanningOverlay() {
       ];
       if (!created.length && payload.intentType === 'TASK_ARRANGEMENT_LOCAL') created = parseLocalArrangement(payload);
       if (!created.length) return response;
-      const blocks = planBlocks(created, body?.context?.todayBlocks || []);
-      const originalText = String(payload.finalSynthesisMarkdown || '');
-      const merged = { ...payload, finalSynthesisMarkdown: `${originalText}\n\n${planningMarkdown(created, blocks)}`, proposedTimeBlocks: blocks };
+      const isFuture = /(明天|後天|下週|下星期|隔日)/i.test(String(body?.message || ''));
+      const blocks = planBlocks(created, isFuture ? [] : body?.context?.todayBlocks || []);
+      const merged = { ...payload, finalSynthesisMarkdown: `${String(payload.finalSynthesisMarkdown || '')}\n\n${planningMarkdown(created, blocks, isFuture)}`, proposedTimeBlocks: isFuture ? [] : blocks };
       return new Response(JSON.stringify(merged), { status: response.status, statusText: response.statusText, headers: response.headers });
     } catch { return response; }
   };
