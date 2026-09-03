@@ -1,8 +1,14 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAppData } from '../context/AppDataContext';
 import { usePlanManager } from '../hooks/usePlanManager';
 import type { WorkTask, StudyTask } from '../types';
 import type { ExecutionPlanStep } from '../engines/taskPlanningEngine';
+import { createFocusSession, finishFocusSession, getElapsedMinutes } from '../engines/focusEngine';
+import type { FocusSession } from '../engines/focusEngine';
+
+const FOCUS_KEY = 'ait_focus_sessions_v1';
+const ACTIVE_FOCUS_KEY = 'ait_active_focus_session_v1';
+const FOCUS_CHANGED_EVENT = 'ait:focus-changed';
 
 function deadlineValue(deadline?: string) {
   if (!deadline) return Number.MAX_SAFE_INTEGER;
@@ -18,9 +24,56 @@ function isPending<T extends { status: string; source?: string }>(task: T) {
   return task.source === 'user' && task.status !== 'completed';
 }
 
+function loadActiveFocus(): FocusSession | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_FOCUS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveFocus(session: FocusSession | null) {
+  if (session) localStorage.setItem(ACTIVE_FOCUS_KEY, JSON.stringify(session));
+  else localStorage.removeItem(ACTIVE_FOCUS_KEY);
+  window.dispatchEvent(new Event(FOCUS_CHANGED_EVENT));
+}
+
+function appendFinishedFocus(session: FocusSession) {
+  try {
+    const current = JSON.parse(localStorage.getItem(FOCUS_KEY) || '[]') as FocusSession[];
+    localStorage.setItem(FOCUS_KEY, JSON.stringify([session, ...current].slice(0, 100)));
+  } catch {
+    localStorage.setItem(FOCUS_KEY, JSON.stringify([session]));
+  }
+}
+
 const ManagerNextAction: React.FC = () => {
   const { workProjects, workTasks, studyTasks, todayBlocks, currentContext } = useAppData();
   const planManager = usePlanManager({ workProjects, workTasks, studyTasks, todayBlocks });
+  const [activeFocus, setActiveFocus] = useState<FocusSession | null>(() => loadActiveFocus());
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const sync = () => setActiveFocus(loadActiveFocus());
+    window.addEventListener(FOCUS_CHANGED_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(FOCUS_CHANGED_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeFocus) {
+      setElapsed(0);
+      return;
+    }
+    const tick = () => setElapsed(getElapsedMinutes(activeFocus));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [activeFocus]);
 
   const scopedWorkTasks = useMemo(() => workTasks.filter(task =>
     isPending(task) &&
@@ -64,6 +117,33 @@ const ManagerNextAction: React.FC = () => {
     return step.dependsOn.every(id => state.completedStepIds.includes(id)) ? 'ready' : 'locked';
   };
 
+  const startStep = (planId: string, step: ExecutionPlanStep) => {
+    if (activeFocus) {
+      window.alert(`目前已有 Focus：「${activeFocus.taskTitle}」，請先完成或結束目前工作。`);
+      return;
+    }
+    const started = planManager.start(planId, step.id);
+    if (!started) return;
+    const session = createFocusSession({
+      taskId: step.id,
+      taskTitle: step.title,
+      plannedMinutes: Math.max(1, Math.round(step.estimatedHours * 60)),
+    });
+    saveActiveFocus(session);
+    setActiveFocus(session);
+  };
+
+  const completeStep = (planId: string, step: ExecutionPlanStep) => {
+    const completed = planManager.complete(planId, step.id);
+    if (!completed) return;
+    if (activeFocus?.taskId === step.id) {
+      const finished = finishFocusSession(activeFocus, { completed: true });
+      appendFinishedFocus(finished);
+      saveActiveFocus(null);
+      setActiveFocus(null);
+    }
+  };
+
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -74,6 +154,19 @@ const ManagerNextAction: React.FC = () => {
         </div>
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{visiblePlans.length} 個進行中計畫</span>
       </div>
+
+      {activeFocus && (
+        <div className="mt-5 rounded-xl border border-slate-300 bg-slate-50 p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold text-emerald-600">🟢 Focus 執行中</p>
+              <h3 className="mt-1 font-bold text-slate-900">{activeFocus.taskTitle}</h3>
+              <p className="mt-1 text-sm text-slate-500">已執行 {elapsed} 分鐘 · 預估 {formatMinutes(activeFocus.plannedMinutes / 60)}</p>
+            </div>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">Execution + Focus</span>
+          </div>
+        </div>
+      )}
 
       {!current && !candidate && (
         <div className="mt-5 rounded-xl bg-slate-50 p-5 text-sm text-slate-500">
@@ -121,8 +214,12 @@ const ManagerNextAction: React.FC = () => {
                     </div>
                   </div>
                   {isActionable && (
-                    <button onClick={() => status === 'running' ? planManager.complete(current.plan.id, step.id) : planManager.start(current.plan.id, step.id)} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
-                      {status === 'running' ? '完成' : '開始執行'}
+                    <button
+                      disabled={status === 'ready' && Boolean(activeFocus)}
+                      onClick={() => status === 'running' ? completeStep(current.plan.id, step) : startStep(current.plan.id, step)}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {status === 'running' ? '完成並記錄 Focus' : '開始執行'}
                     </button>
                   )}
                 </div>
