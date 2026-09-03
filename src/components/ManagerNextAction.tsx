@@ -12,6 +12,7 @@ import type { ManagerMemory } from '../engines/memoryEngine';
 const FOCUS_KEY = 'ait_focus_sessions_v1';
 const ACTIVE_FOCUS_KEY = 'ait_active_focus_session_v1';
 const MEMORY_KEY = 'ait_manager_memories_v2';
+const AUTO_PLAN_KEY = 'ait_manager_auto_plan_v1';
 const FOCUS_CHANGED_EVENT = 'ait:focus-changed';
 
 function deadlineValue(deadline?: string) {
@@ -56,6 +57,7 @@ const ManagerNextAction: React.FC = () => {
   const [elapsed, setElapsed] = useState(0);
   const [memories, setMemories] = useState<ManagerMemory[]>(() => loadMemories());
   const [nowTick, setNowTick] = useState(Date.now());
+  const [autoPlanMessage, setAutoPlanMessage] = useState<string | null>(null);
 
   useEffect(() => { const id = window.setInterval(() => setNowTick(Date.now()), 30000); return () => window.clearInterval(id); }, []);
   useEffect(() => { localStorage.setItem(MEMORY_KEY, JSON.stringify(memories)); }, [memories]);
@@ -94,6 +96,17 @@ const ManagerNextAction: React.FC = () => {
   const adaptiveAction = adaptive[0];
   const diagnosisAction = diagnosis[0];
 
+  // Manager 只自動建立「計畫」，不自動開始 Focus，也不修改原始 Task。
+  // sessionStorage 避免同一頁面在 React re-render 時重複建立；sourceTaskId 則提供跨重新載入的冪等判斷。
+  useEffect(() => {
+    if (!candidate || current || activeFocus) return;
+    const marker = localStorage.getItem(AUTO_PLAN_KEY);
+    if (marker === candidate.id) return;
+    const result = planManager.ensurePlanForTask(candidate);
+    localStorage.setItem(AUTO_PLAN_KEY, candidate.id);
+    if (result.created) setAutoPlanMessage(`Manager 已自動為「${candidate.title}」建立執行計畫。`);
+  }, [candidate, current, activeFocus, planManager.ensurePlanForTask]);
+
   const createPlan = () => { if (candidate) planManager.createPlanForTask(candidate); };
   const formatMinutes = (hours: number) => { const minutes = Math.round(hours * 60); return minutes >= 60 ? `${Math.floor(minutes / 60)} 小時 ${minutes % 60 ? `${minutes % 60} 分` : ''}`.trim() : `${minutes} 分鐘`; };
   const stepStatus = (step: ExecutionPlanStep, state?: { runningStepId?: string; completedStepIds: string[] }) => { if (!state) return 'ready'; if (state.completedStepIds.includes(step.id)) return 'completed'; if (state.runningStepId === step.id) return 'running'; return step.dependsOn.every(id => state.completedStepIds.includes(id)) ? 'ready' : 'locked'; };
@@ -118,6 +131,7 @@ const ManagerNextAction: React.FC = () => {
       {adaptiveAction && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-500">🔄 Adaptive Planning</p><p className="mt-1 font-semibold text-slate-800">{adaptiveAction.title}</p><p className="mt-1 text-sm text-slate-600">{adaptiveAction.suggestedAction}</p></div>}
     </div>}
 
+    {autoPlanMessage && <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">✓ {autoPlanMessage}</div>}
     {activeFocus && <div className="mt-5 rounded-xl border border-slate-300 bg-slate-50 p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold text-emerald-600">🟢 Focus 執行中</p><h3 className="mt-1 font-bold text-slate-900">{activeFocus.taskTitle}</h3><p className="mt-1 text-sm text-slate-500">已執行 {elapsed} 分鐘 · 預估 {formatMinutes(activeFocus.plannedMinutes / 60)}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">Execution + Focus</span></div></div>}
 
     {!current && !candidate && <div className="mt-5 rounded-xl bg-slate-50 p-5 text-sm text-slate-500">目前沒有可建立執行計畫的 User Task。新增任務後，Manager 會在這裡提供下一步。</div>}
