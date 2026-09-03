@@ -23,6 +23,7 @@ export interface ExecutionPlan {
   id: string;
   title: string;
   objective: string;
+  sourceTaskId?: string;
   projectId?: string;
   subjectId?: string;
   status: 'draft' | 'ready' | 'executing' | 'completed' | 'blocked';
@@ -67,6 +68,7 @@ export function decomposeTask(input: DecompositionInput): ExecutionPlan {
     id: planId,
     title: `${input.title}｜執行計畫`,
     objective: input.objective?.trim() || input.title,
+    sourceTaskId: input.sourceTask?.id,
     projectId: input.taskType === 'work'
       ? (input.sourceTask && 'projectId' in input.sourceTask ? input.sourceTask.projectId : input.project?.id)
       : undefined,
