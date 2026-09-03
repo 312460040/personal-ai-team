@@ -54,9 +54,8 @@ const INITIAL_WELCOME_MESSAGE: ChatMessage = {
 
 #### 🛡️ 資料來源隔離與防捏造原則：
 1. **Manager Agent (總管)**：接收需求後，分派查詢給專屬 Agent，並嚴格根據 Agent 回傳之**使用者真實資料 (User Data)** 做決策。
-2. **Work Agent (工作管理員)**：預設**只能分析 \`source = "user"\`** 的工作專案與任務，Demo 示範資料絕不納入分析。
-3. **Study Agent (課業管理員)**：預設**只能分析 \`source = "user"\`** 的學科與課業，絕不自行捏造不存在的科目或題型。
-
+2. **Work Agent (工作管理員)**：預設**只能分析 source = "user"** 的工作專案與任務，Demo 示範資料絕不納入分析。
+3. **Study Agent (課業管理員)**：預設**只能分析 source = "user"** 的學科與課業，絕不自行捏造不存在的科目或題型。
 ---
 
 💡 **試試看詢問**：
@@ -68,11 +67,9 @@ Work Agent 會讀取你在資料庫中建立的真實任務（**設計 AI Agent 
 };
 
 interface AppDataContextType {
-  // Current Context
-
   currentContext: CurrentContext;
   setCurrentContext: (context: CurrentContext) => void;
-  // Shared Data Store
+
   workProjects: WorkProject[];
   workTasks: WorkTask[];
   studySubjects: StudySubject[];
@@ -84,7 +81,6 @@ interface AppDataContextType {
   activityLogs: AgentActivityLog[];
   isLoading: boolean;
 
-  // Work operations (Always source: 'user', createdBy: 'user')
   addWorkTask: (task: Omit<WorkTask, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void;
   updateWorkTask: (task: WorkTask) => void;
   deleteWorkTask: (taskId: string) => void;
@@ -93,7 +89,6 @@ interface AppDataContextType {
   updateWorkProject: (project: WorkProject) => void;
   deleteWorkProject: (projectId: string) => void;
 
-  // Study operations (Always source: 'user', createdBy: 'user')
   addStudyTask: (task: Omit<StudyTask, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void;
   updateStudyTask: (task: StudyTask) => void;
   deleteStudyTask: (taskId: string) => void;
@@ -102,43 +97,54 @@ interface AppDataContextType {
   updateStudySubject: (subject: StudySubject) => void;
   deleteStudySubject: (subjectId: string) => void;
 
-  // Today operations
   addTodayBlock: (block: Omit<TodayTimeBlock, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void;
+  updateTodayBlock: (block: TodayTimeBlock) => void;
   toggleTodayBlock: (blockId: string) => void;
   applyScheduleToToday: (blocks: StructuredTimeBlock[]) => void;
 
-  // Discussion & People operations
   addDiscussionRecord: (rec: Omit<DiscussionRecord, 'id' | 'source' | 'createdBy'>) => void;
   deleteDiscussionRecord: (id: string) => void;
   addPerson: (person: Omit<Person, 'id' | 'source' | 'createdBy'>) => void;
 
-  // Agent Communication
   sendMessage: (text: string) => Promise<void>;
 
-  // Data management
   clearDemoData: () => void;
   loadDemoData: () => void;
   clearAllData: () => void;
 }
+
 export interface CurrentContext {
   workspaceId: string;
   projectId: string | null;
 }
+
 const AppDataContext = createContext<AppDataContextType | null>(null);
 
-// Migration helper to ensure all items have explicit source and createdBy tags and maintain strict data fidelity
-function migrateItems<T extends { id: string; source?: 'user' | 'demo'; createdBy?: 'user' | 'system'; title?: string; projectName?: string; priority?: string; deadline?: string }>(
+function migrateItems<T extends {
+  id: string;
+  source?: 'user' | 'demo';
+  createdBy?: 'user' | 'system';
+  title?: string;
+  projectName?: string;
+  priority?: string;
+  deadline?: string;
+}>(
   items: T[],
-  defaultUserItems: T[]
+  _defaultUserItems: T[]
 ): T[] {
-  const result: T[] = items.map((item) => {
-    let updatedItem = { ...item };
+  return items.map((item) => {
+    const updatedItem = { ...item };
+
     if (!updatedItem.source || !updatedItem.createdBy) {
-      const isDemo = updatedItem.id.includes('demo') || (updatedItem.title && updatedItem.title.includes('【Demo】')) || (updatedItem.projectName && updatedItem.projectName.includes('【Demo】'));
-      updatedItem.source = isDemo ? ('demo' as const) : ('user' as const);
-      updatedItem.createdBy = isDemo ? ('system' as const) : ('user' as const);
+      const isDemo =
+        updatedItem.id.includes('demo') ||
+        (updatedItem.title && updatedItem.title.includes('【Demo】')) ||
+        (updatedItem.projectName && updatedItem.projectName.includes('【Demo】'));
+
+      updatedItem.source = isDemo ? 'demo' : 'user';
+      updatedItem.createdBy = isDemo ? 'system' : 'user';
     }
-    // Fix historical truncated deadlines or mis-inferred priorities in localStorage
+
     if (updatedItem.title && updatedItem.title.includes('整理 AI Team 下一階段開發計畫')) {
       updatedItem.priority = 'medium';
       if (!updatedItem.deadline || updatedItem.deadline === '2026-09-05') {
@@ -151,25 +157,25 @@ function migrateItems<T extends { id: string; source?: 'user' | 'demo'; createdB
       }
     } else if (updatedItem.title && updatedItem.title.includes('設計 AI Agent 團隊架構')) {
       updatedItem.priority = 'high';
-      if (!updatedItem.deadline || updatedItem.deadline === '2026-09-03 18:00' || updatedItem.deadline === '2026-09-03') {
+      if (
+        !updatedItem.deadline ||
+        updatedItem.deadline === '2026-09-03 18:00' ||
+        updatedItem.deadline === '2026-09-03'
+      ) {
         updatedItem.deadline = '2026-09-03T18:00:00';
       }
     }
+
     return updatedItem;
   });
-
-
-  return result;
 }
 
 export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // 0. Current Context
   const [currentContext, setCurrentContext] = useState<CurrentContext>({
     workspaceId: 'work',
     projectId: 'proj-user-ai-team',
   });
 
-  // 1. Unified Shared Data States with Strict Source Tagging
   const [workProjects, setWorkProjects] = useState<WorkProject[]>(() => {
     try {
       const saved = localStorage.getItem('ait_work_projects_v2');
@@ -265,24 +271,26 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } catch (e) {
       console.error('Error reading ait_activity_logs_v2', e);
     }
-    return [
-      {
-        id: 'init-act-1',
-        timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-        stepIndex: 1,
-        fromAgent: 'manager',
-        action: '系統啟動與資料來源隔離',
-        summary: 'Manager Agent：已連結至統一共享資料來源 (Shared Data Store)',
-        detail: '嚴格落實 User Data 與 Demo Data 隔離。Work/Study Agents 預設僅分析 source === "user" 之真實資料。',
-        status: 'completed',
-        durationMs: 35,
-      },
-    ];
+    return [{
+      id: 'init-act-1',
+      timestamp: new Date().toLocaleTimeString('zh-TW', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }),
+      stepIndex: 1,
+      fromAgent: 'manager',
+      action: '系統啟動與資料來源隔離',
+      summary: 'Manager Agent：已連結至統一共享資料來源 (Shared Data Store)',
+      detail: '嚴格落實 User Data 與 Demo Data 隔離。Work/Study Agents 預設僅分析 source === "user" 之真實資料。',
+      status: 'completed',
+      durationMs: 35,
+    }];
   });
 
   const [isLoading, setIsLoading] = useState(false);
 
-  // 2. Sync to LocalStorage whenever state changes
   useEffect(() => {
     localStorage.setItem('ait_work_projects_v2', JSON.stringify(workProjects));
   }, [workProjects]);
@@ -319,8 +327,13 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('ait_activity_logs_v2', JSON.stringify(activityLogs));
   }, [activityLogs]);
 
-  // 3. Work Operations (ALWAYS source: 'user', createdBy: 'user')
-  const addWorkTask = (task: Omit<WorkTask, 'id' | 'source' | 'createdBy'> & { id?: string; source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => {
+  const addWorkTask = (
+    task: Omit<WorkTask, 'id' | 'source' | 'createdBy'> & {
+      id?: string;
+      source?: 'user' | 'demo';
+      createdBy?: 'user' | 'system';
+    }
+  ) => {
     const newTask: WorkTask = {
       ...task,
       id: task.id || `w-task-user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -331,7 +344,13 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateWorkTask = (task: WorkTask) => {
-    setWorkTasks((prev) => prev.map((t) => (t.id === task.id ? { ...task, source: task.source || 'user', createdBy: task.createdBy || 'user' } : t)));
+    setWorkTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id
+          ? { ...task, source: task.source || 'user', createdBy: task.createdBy || 'user' }
+          : t
+      )
+    );
   };
 
   const deleteWorkTask = (taskId: string) => {
@@ -348,7 +367,12 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     );
   };
 
-  const addWorkProject = (project: Omit<WorkProject, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => {
+  const addWorkProject = (
+    project: Omit<WorkProject, 'id' | 'source' | 'createdBy'> & {
+      source?: 'user' | 'demo';
+      createdBy?: 'user' | 'system';
+    }
+  ) => {
     const newProj: WorkProject = {
       ...project,
       id: `proj-user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -359,9 +383,20 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateWorkProject = (project: WorkProject) => {
-    setWorkProjects((prev) => prev.map((p) => (p.id === project.id ? { ...project, source: project.source || 'user', createdBy: project.createdBy || 'user' } : p)));
+    setWorkProjects((prev) =>
+      prev.map((p) =>
+        p.id === project.id
+          ? { ...project, source: project.source || 'user', createdBy: project.createdBy || 'user' }
+          : p
+      )
+    );
+
     setWorkTasks((prev) =>
-      prev.map((t) => (t.projectId === project.id ? { ...t, projectName: project.title } : t))
+      prev.map((t) =>
+        t.projectId === project.id
+          ? { ...t, projectName: project.title }
+          : t
+      )
     );
   };
 
@@ -369,8 +404,13 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setWorkProjects((prev) => prev.filter((p) => p.id !== projectId));
   };
 
-  // 4. Study Operations (ALWAYS source: 'user', createdBy: 'user')
-  const addStudyTask = (task: Omit<StudyTask, 'id' | 'source' | 'createdBy'> & { id?: string; source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => {
+  const addStudyTask = (
+    task: Omit<StudyTask, 'id' | 'source' | 'createdBy'> & {
+      id?: string;
+      source?: 'user' | 'demo';
+      createdBy?: 'user' | 'system';
+    }
+  ) => {
     const newTask: StudyTask = {
       ...task,
       id: task.id || `s-task-user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -381,7 +421,13 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateStudyTask = (task: StudyTask) => {
-    setStudyTasks((prev) => prev.map((t) => (t.id === task.id ? { ...task, source: task.source || 'user', createdBy: task.createdBy || 'user' } : t)));
+    setStudyTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id
+          ? { ...task, source: task.source || 'user', createdBy: task.createdBy || 'user' }
+          : t
+      )
+    );
   };
 
   const deleteStudyTask = (taskId: string) => {
@@ -398,7 +444,12 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     );
   };
 
-  const addStudySubject = (subject: Omit<StudySubject, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => {
+  const addStudySubject = (
+    subject: Omit<StudySubject, 'id' | 'source' | 'createdBy'> & {
+      source?: 'user' | 'demo';
+      createdBy?: 'user' | 'system';
+    }
+  ) => {
     const newSubj: StudySubject = {
       ...subject,
       id: `subj-user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -409,9 +460,20 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateStudySubject = (subject: StudySubject) => {
-    setStudySubjects((prev) => prev.map((s) => (s.id === subject.id ? { ...subject, source: subject.source || 'user', createdBy: subject.createdBy || 'user' } : s)));
+    setStudySubjects((prev) =>
+      prev.map((s) =>
+        s.id === subject.id
+          ? { ...subject, source: subject.source || 'user', createdBy: subject.createdBy || 'user' }
+          : s
+      )
+    );
+
     setStudyTasks((prev) =>
-      prev.map((t) => (t.subjectId === subject.id ? { ...t, subjectName: subject.name } : t))
+      prev.map((t) =>
+        t.subjectId === subject.id
+          ? { ...t, subjectName: subject.name }
+          : t
+      )
     );
   };
 
@@ -419,8 +481,12 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setStudySubjects((prev) => prev.filter((s) => s.id !== subjectId));
   };
 
-  // 5. Today Operations
-  const addTodayBlock = (block: Omit<TodayTimeBlock, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => {
+  const addTodayBlock = (
+    block: Omit<TodayTimeBlock, 'id' | 'source' | 'createdBy'> & {
+      source?: 'user' | 'demo';
+      createdBy?: 'user' | 'system';
+    }
+  ) => {
     const newBlock: TodayTimeBlock = {
       ...block,
       id: `block-user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -430,9 +496,27 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setTodayBlocks((prev) => [...prev, newBlock]);
   };
 
+  const updateTodayBlock = (block: TodayTimeBlock) => {
+    setTodayBlocks((prev) =>
+      prev.map((b) =>
+        b.id === block.id
+          ? {
+              ...block,
+              source: block.source || 'user',
+              createdBy: block.createdBy || 'user',
+            }
+          : b
+      )
+    );
+  };
+
   const toggleTodayBlock = (blockId: string) => {
     setTodayBlocks((prev) =>
-      prev.map((b) => (b.id === blockId ? { ...b, completed: !b.completed } : b))
+      prev.map((b) =>
+        b.id === blockId
+          ? { ...b, completed: !b.completed }
+          : b
+      )
     );
   };
 
@@ -449,11 +533,13 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
       source: 'user',
       createdBy: 'user',
     }));
+
     setTodayBlocks(newTodayBlocks);
   };
 
-  // 6. Discussion & People Operations
-  const addDiscussionRecord = (rec: Omit<DiscussionRecord, 'id' | 'source' | 'createdBy'>) => {
+  const addDiscussionRecord = (
+    rec: Omit<DiscussionRecord, 'id' | 'source' | 'createdBy'>
+  ) => {
     const newRec: DiscussionRecord = {
       ...rec,
       id: `disc-user-${Date.now()}`,
@@ -464,10 +550,14 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const deleteDiscussionRecord = (id: string) => {
-    setDiscussionRecords((prev) => prev.filter((d) => d.id !== id));
+    setDiscussionRecords((prev) =>
+      prev.filter((d) => d.id !== id)
+    );
   };
 
-  const addPerson = (person: Omit<Person, 'id' | 'source' | 'createdBy'>) => {
+  const addPerson = (
+    person: Omit<Person, 'id' | 'source' | 'createdBy'>
+  ) => {
     const newPerson: Person = {
       ...person,
       id: `person-user-${Date.now()}`,
@@ -477,7 +567,6 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setPeople((prev) => [...prev, newPerson]);
   };
 
-  // 7. Clear Demo Data ONLY (Preserves all source: "user" data)
   const clearDemoData = () => {
     setWorkProjects((prev) => prev.filter((p) => p.source === 'user'));
     setWorkTasks((prev) => prev.filter((t) => t.source === 'user'));
@@ -490,7 +579,12 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setActivityLogs((prev) => [
       {
         id: `clear-demo-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+        timestamp: new Date().toLocaleTimeString('zh-TW', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }),
         stepIndex: 1,
         fromAgent: 'manager',
         action: '清除所有示範資料',
@@ -503,24 +597,27 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     ]);
   };
 
-  // Load Demo Data
   const loadDemoData = () => {
     setWorkProjects((prev) => {
       const userOnly = prev.filter((p) => p.source === 'user');
       return [...userOnly, ...DEMO_WORK_PROJECTS];
     });
+
     setWorkTasks((prev) => {
       const userOnly = prev.filter((t) => t.source === 'user');
       return [...userOnly, ...DEMO_WORK_TASKS];
     });
+
     setStudySubjects((prev) => {
       const userOnly = prev.filter((s) => s.source === 'user');
       return [...userOnly, ...DEMO_STUDY_SUBJECTS];
     });
+
     setStudyTasks((prev) => {
       const userOnly = prev.filter((t) => t.source === 'user');
       return [...userOnly, ...DEMO_STUDY_TASKS];
     });
+
     setTodayBlocks((prev) => {
       const userOnly = prev.filter((b) => b.source === 'user');
       return [...userOnly, ...DEMO_TODAY_BLOCKS];
@@ -529,7 +626,12 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setActivityLogs((prev) => [
       {
         id: `load-demo-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+        timestamp: new Date().toLocaleTimeString('zh-TW', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }),
         stepIndex: 1,
         fromAgent: 'manager',
         action: '載入 Demo 示範資料',
@@ -542,7 +644,6 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     ]);
   };
 
-  // Clear All Data
   const clearAllData = () => {
     setWorkProjects([]);
     setWorkTasks([]);
@@ -550,11 +651,25 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setStudyTasks([]);
     setTodayBlocks([]);
     setDiscussionRecords([]);
-    setPeople([{ id: 'p-1', name: '本人', role: '本人 / 負責人', source: 'user', createdBy: 'user' }]);
+    setPeople([
+      {
+        id: 'p-1',
+        name: '本人',
+        role: '本人 / 負責人',
+        source: 'user',
+        createdBy: 'user',
+      },
+    ]);
+
     setActivityLogs([
       {
         id: `clear-all-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+        timestamp: new Date().toLocaleTimeString('zh-TW', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }),
         stepIndex: 1,
         fromAgent: 'manager',
         action: '清空共享資料庫',
@@ -566,14 +681,18 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     ]);
   };
 
-  // 8. Agent Communication
   const sendMessage = async (text: string) => {
     const userMsgId = `user-${Date.now()}`;
+
     const userMsg: ChatMessage = {
       id: userMsgId,
       sender: 'user',
       text,
-      timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }),
+      timestamp: new Date().toLocaleTimeString('zh-TW', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }),
     };
 
     setMessages((prev) => [...prev, userMsg]);
@@ -587,7 +706,6 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
           message: text,
           context: {
             currentContext,
-
             workProjects,
             workTasks,
             studySubjects,
@@ -605,7 +723,6 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       const data = await response.json();
 
-      // If server returned created task commands (data creation instruction)
       if (data.createdStudyTask) {
         addStudyTask(data.createdStudyTask);
       } else if (data.createdWorkTask) {
@@ -614,7 +731,6 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
         addWorkTask(data.createdTaskPayload);
       }
 
-      // If server returned updated task commands (data modification instruction)
       if (data.updatedWorkTask) {
         updateWorkTask(data.updatedWorkTask);
       } else if (data.updatedTaskPayload) {
@@ -626,11 +742,18 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       const managerMsgId = `manager-${Date.now()}`;
+
       const managerMsg: ChatMessage = {
         id: managerMsgId,
         sender: 'manager',
-        text: data.finalSynthesisMarkdown || '已收到需求並完成多 Agent 協調處理。',
-        timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        text:
+          data.finalSynthesisMarkdown ||
+          '已收到需求並完成多 Agent 協調處理。',
+        timestamp: new Date().toLocaleTimeString('zh-TW', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }),
         intentType: data.intentType,
         delegatedAgents: data.delegatedAgents,
         activityLogs: data.activityLogs || [],
@@ -641,19 +764,33 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       setMessages((prev) => [...prev, managerMsg]);
 
-      if (data.activityLogs && Array.isArray(data.activityLogs)) {
-        setActivityLogs((prev) => [...data.activityLogs, ...prev].slice(0, 60));
+      if (
+        data.activityLogs &&
+        Array.isArray(data.activityLogs)
+      ) {
+        setActivityLogs((prev) =>
+          [...data.activityLogs, ...prev].slice(0, 60)
+        );
       }
     } catch (error) {
-      console.error('Failed to call multi-agent chat:', error);
+      console.error(
+        'Failed to call multi-agent chat:',
+        error
+      );
+
       const fallbackMsg: ChatMessage = {
         id: `manager-err-${Date.now()}`,
         sender: 'manager',
         text: `### ⚠️ AI 團隊通訊服務提醒
 目前伺服器連線繁忙或發生短暫中斷。請確認資料庫狀態後再次嘗試。`,
-        timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        timestamp: new Date().toLocaleTimeString('zh-TW', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }),
         delegatedAgents: ['work', 'study'],
       };
+
       setMessages((prev) => [...prev, fallbackMsg]);
     } finally {
       setIsLoading(false);
@@ -690,6 +827,7 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateStudySubject,
         deleteStudySubject,
         addTodayBlock,
+        updateTodayBlock,
         toggleTodayBlock,
         applyScheduleToToday,
         addDiscussionRecord,
@@ -708,8 +846,12 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
 export const useAppData = () => {
   const context = useContext(AppDataContext);
+
   if (!context) {
-    throw new Error('useAppData must be used within an AppDataProvider');
+    throw new Error(
+      'useAppData must be used within an AppDataProvider'
+    );
   }
+
   return context;
 };

@@ -139,6 +139,7 @@ export const WorkView: React.FC<WorkViewProps> = ({
       onUpdateTask({
         ...editingTask,
         title: taskTitle.trim(),
+        workspaceId: 'work',
         projectId: finalProjectId,
         projectName: finalProjectName,
         priority: taskPriority,
@@ -153,6 +154,7 @@ export const WorkView: React.FC<WorkViewProps> = ({
     } else {
       onAddTask({
         title: taskTitle.trim(),
+        workspaceId: 'work',
         projectId: finalProjectId || 'proj-work',
         projectName: finalProjectName,
         priority: taskPriority,
@@ -226,6 +228,7 @@ export const WorkView: React.FC<WorkViewProps> = ({
     } else {
       onAddProject({
         title: projectTitle.trim(),
+        workspaceId: 'work',
         category: projectCategory.trim(),
         priority: projectPriority,
         status: projectStatus,

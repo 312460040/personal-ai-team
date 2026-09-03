@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Navbar } from './components/Navbar';
 import { AiTeamChat } from './components/AiTeamChat';
+import OwnerDashboard from './components/OwnerDashboard';
 import { AgentActivityView } from './components/AgentActivityView';
 import { WorkView } from './components/WorkView';
 import { StudyView } from './components/StudyView';
@@ -87,13 +88,7 @@ function AppMainContent() {
       {/* Main View Router */}
       <main className="flex-1 w-full pb-10">
         {activeTab === 'chat' && (
-          <AiTeamChat
-            messages={messages}
-            onSendMessage={sendMessage}
-            isLoading={isLoading}
-            onApplyScheduleToToday={applyScheduleToToday}
-            currentActiveAgents={['manager', 'work', 'study']}
-          />
+          <OwnerDashboard />
         )}
 
         {activeTab === 'activity' && (
