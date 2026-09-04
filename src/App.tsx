@@ -18,6 +18,7 @@ import { analyzeManagerState } from './engines/managerEngine';
 import { buildNotifications } from './engines/notificationEngine';
 import type { AppNotification } from './engines/notificationEngine';
 import type { WorkTask, StudyTask, StructuredTimeBlock } from './types';
+import { apiUrl } from './services/apiBase';
 
 type ChatSendContext = { workspaceId: string; projectId: string | null; chatRoomId: string; chatRoomName: string; chatCategoryId: string };
 const NOTIFICATION_KEY = 'ait_notifications_v1';
@@ -36,7 +37,7 @@ function AppMainContent() {
   const isScheduleCommand = (text: string) => /(?:幫我|請幫我|請|麻煩)?(?:安排|排定|規劃|排程|分配).{0,60}(?:今天|明天|明日|時間|行程|工作|課業|事情|時段)/i.test(text) || /(?:今天|明天|明日).{0,30}(?:怎麼排|幫我排|安排一下|排程|時間規劃)/i.test(text);
   const executeSchedule = async (text: string) => {
     try {
-      const response = await fetch('/api/agent/execute-schedule', {
+      const response = await fetch(apiUrl('/api/agent/execute-schedule'), {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Confirmed': 'true' },
         body: JSON.stringify({ message: text, context: { workProjects, workTasks, studySubjects, studyTasks, currentContext: data.currentContext } }),
       });
@@ -46,25 +47,17 @@ function AppMainContent() {
         applyScheduleToToday(result.blocks as StructuredTimeBlock[]);
         setActiveTab('today');
       }
-    } catch (error) {
-      console.error('Manager schedule execution failed:', error);
-    }
+    } catch (error) { console.error('Manager schedule execution failed:', error); }
   };
   const handleChatSend = async (text: string, context?: ChatSendContext) => {
     if (context) setCurrentContext({ workspaceId: context.workspaceId, projectId: context.projectId });
-    if (isScheduleCommand(text)) {
-      // The natural-language command is still sent to Manager for conversation/audit;
-      // the executable schedule path runs in parallel and writes the resulting blocks automatically.
-      await Promise.all([sendMessage(text), executeSchedule(text)]);
-      return;
-    }
+    if (isScheduleCommand(text)) { await Promise.all([sendMessage(text), executeSchedule(text)]); return; }
     await sendMessage(text);
   };
   const currentActiveAgents = ['manager', 'work', 'study'];
   const workPendingCount = workTasks.filter(t => t.status !== 'completed').length;
   const studyPendingCount = studyTasks.filter(t => t.status !== 'completed').length;
   const managerAnalysis = useMemo(() => analyzeManagerState({ workTasks, studyTasks, todayBlocks }), [workTasks, studyTasks, todayBlocks]);
-
   useEffect(() => { localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(notifications)); }, [notifications]);
   useEffect(() => { const next = buildNotifications(managerAnalysis, workTasks, studyTasks, notifications); const changed = next.length !== notifications.length || next.some((item, index) => item.id !== notifications[index]?.id || item.read !== notifications[index]?.read); if (changed) setNotifications(next); }, [managerAnalysis, workTasks, studyTasks]);
   useEffect(() => { const stored = localStorage.getItem(TASK_BATCH_KEY); if (stored) { try { const ids = JSON.parse(stored); if (Array.isArray(ids)) ids.forEach((id: string) => processedTaskBatchIds.current.add(id)); } catch {} } }, []);
@@ -73,7 +66,6 @@ function AppMainContent() {
   const confirmAndApplySchedule = (blocks: StructuredTimeBlock[]) => { if (!blocks.length) return; applyScheduleToToday(blocks); setActiveTab('today'); };
   const markNotificationRead = (id: string) => setNotifications(prev => prev.map(item => item.id === id ? { ...item, read: true } : item));
   const markAllNotificationsRead = () => setNotifications(prev => prev.map(item => ({ ...item, read: true })));
-
   return <div className="min-h-screen bg-[#F8F7F4] text-[#2D322E] flex flex-col font-sans selection:bg-[#5C7C66]/20 selection:text-[#2D4835]">
     <NavigationShell activeTab={activeTab} onTabChange={tab => tab === 'agents' ? setIsAgentsModalOpen(true) : setActiveTab(tab)} onLoadDemoData={() => { if (window.confirm('確定要載入 Demo 範例資料嗎？（這將重設為示範任務資料庫）')) loadDemoData(); }} onClearDemoData={() => { if (window.confirm('確定要清除所有示範資料嗎？（這將完整保留你的真實資料）')) clearDemoData(); }} onClearAllData={() => { if (window.confirm('確定要清空共享資料庫以測試「查無資料」真實防捏造模式嗎？')) clearAllData(); }} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workTasksCount={workPendingCount} studyTasksCount={studyPendingCount} onOpenAgentsModal={() => setIsAgentsModalOpen(true)} onOpenManagerStatus={() => setIsManagerStatusOpen(true)} notifications={notifications} onReadNotifications={markNotificationRead} onReadAllNotifications={markAllNotificationsRead} />
     <main className="flex-1 w-full pb-10">
@@ -89,5 +81,4 @@ function AppMainContent() {
     <ManagerStatusDrawer isOpen={isManagerStatusOpen} onClose={() => setIsManagerStatusOpen(false)} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workPendingCount={workPendingCount} studyPendingCount={studyPendingCount} />
   </div>;
 }
-
 export default function App() { return <AppDataProvider><AppMainContent /></AppDataProvider>; }
