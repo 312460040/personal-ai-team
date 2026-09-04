@@ -35,7 +35,22 @@ function AppMainContent() {
   const processedTaskBatchIds = useRef<Set<string>>(new Set());
   const handleAskAgentFromTab = (prompt: string) => { setActiveTab('chat'); sendMessage(prompt); };
   const isScheduleCommand = (text: string) => /(?:幫我|請幫我|請|麻煩)?(?:安排|排定|規劃|排程|分配).{0,60}(?:今天|明天|明日|時間|行程|工作|課業|事情|時段)/i.test(text) || /(?:今天|明天|明日).{0,30}(?:怎麼排|幫我排|安排一下|排程|時間規劃)/i.test(text);
-  const executeSchedule = async (text: string) => { try { const response = await fetch(apiUrl('/api/agent/execute-schedule'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Confirmed': 'true', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ message: text, context: { workProjects, workTasks, studySubjects, studyTasks, currentContext: data.currentContext } }) }); if (!response.ok) throw new Error(`schedule execution returned ${response.status}`); const result = await response.json(); if (result.executed && Array.isArray(result.blocks) && result.blocks.length) { applyScheduleToToday(result.blocks as StructuredTimeBlock[]); setActiveTab('today'); } } catch (error) { console.error('Manager schedule execution failed:', error); } };
+  const toCalendarDateTime = (targetDate: string, time: string) => `${targetDate}T${time}:00`;
+  const syncManagedScheduleToCalendar = async (targetDate: string, blocks: StructuredTimeBlock[]) => {
+    const managed = blocks.filter((block: any) => (block.type === 'work' || block.type === 'study') && block.taskId && /^\d{2}:\d{2} - \d{2}:\d{2}$/.test(String(block.time || '')));
+    if (!managed.length) return { synced: 0, failed: 0 };
+    let synced = 0; let failed = 0;
+    await Promise.all(managed.map(async (block: any) => {
+      try {
+        const [startTime, endTime] = String(block.time).split(' - ');
+        const response = await fetch(apiUrl('/api/calendar/events'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Confirmed': 'true', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ externalTaskId: String(block.taskId), title: `${block.type === 'work' ? '💼' : '🎓'} ${block.title}`, description: `由 Personal AI Team Manager 排程。${block.tips || ''}`, startAt: toCalendarDateTime(targetDate, startTime), endAt: toCalendarDateTime(targetDate, endTime) }) });
+        if (!response.ok) { failed += 1; return; }
+        synced += 1;
+      } catch { failed += 1; }
+    }));
+    return { synced, failed };
+  };
+  const executeSchedule = async (text: string) => { try { const response = await fetch(apiUrl('/api/agent/execute-schedule'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Confirmed': 'true', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ message: text, context: { workProjects, workTasks, studySubjects, studyTasks, currentContext: data.currentContext } }) }); if (!response.ok) throw new Error(`schedule execution returned ${response.status}`); const result = await response.json(); if (result.executed && Array.isArray(result.blocks) && result.blocks.length) { applyScheduleToToday(result.blocks as StructuredTimeBlock[]); const calendarResult = await syncManagedScheduleToCalendar(result.targetDate, result.blocks as StructuredTimeBlock[]); if (calendarResult.failed) console.warn('Some managed schedule blocks could not be synced to Google Calendar:', calendarResult); setActiveTab('today'); } } catch (error) { console.error('Manager schedule execution failed:', error); } };
   const handleChatSend = async (text: string, context?: ChatSendContext) => { if (context) setCurrentContext({ workspaceId: context.workspaceId, projectId: context.projectId }); if (isScheduleCommand(text)) { await Promise.all([sendMessage(text), executeSchedule(text)]); return; } await sendMessage(text); };
   const currentActiveAgents = ['manager', 'work', 'study']; const workPendingCount = workTasks.filter(t => t.status !== 'completed').length; const studyPendingCount = studyTasks.filter(t => t.status !== 'completed').length;
   const managerAnalysis = useMemo(() => analyzeManagerState({ workTasks, studyTasks, todayBlocks }), [workTasks, studyTasks, todayBlocks]);
@@ -53,7 +68,7 @@ function AppMainContent() {
       {activeTab === 'chat' && <ChatWorkspace messages={messages} onSendMessage={handleChatSend} isLoading={isLoading} onApplyScheduleToToday={confirmAndApplySchedule} currentActiveAgents={currentActiveAgents} agentRegistry={AGENT_REGISTRY} workTasks={workTasks} studyTasks={studyTasks} workProjects={workProjects} studySubjects={studySubjects} onToggleWorkTask={toggleWorkTask} onToggleStudyTask={toggleStudyTask} onUpdateWorkTask={updateWorkTask} onUpdateStudyTask={updateStudyTask} onAddWorkTask={addWorkTask} onAddStudyTask={addStudyTask} />}
       {activeTab === 'activity' && <AgentActivityView activityLogs={activityLogs} onTriggerDemoFlow={() => { setActiveTab('chat'); sendMessage('幫我檢查目前有哪些工作需要優先處理？'); }} isLoading={isLoading} />}
       {activeTab === 'work' && <WorkView projects={workProjects} tasks={workTasks} onToggleTask={toggleWorkTask} onAddTask={addWorkTask} onUpdateTask={updateWorkTask} onDeleteTask={deleteWorkTask} onAddProject={addWorkProject} onUpdateProject={updateWorkProject} onDeleteProject={deleteWorkProject} onAskAgentAboutWork={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
-      {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onAddSubject={addStudySubject} onUpdateSubject={updateStudySubject} onDeleteSubject={deleteStudySubject} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
+      {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
       {activeTab === 'today' && <TodayView blocks={todayBlocks} onToggleBlock={data.toggleTodayBlock} onAddBlock={data.addTodayBlock} onAskManagerToReschedule={() => { setActiveTab('chat'); sendMessage('檢視我今天現有的工作與課業時間塊，幫我重新規劃最佳化時間分配。'); }} />}
       {activeTab === 'ideas' && <div className="mx-auto max-w-7xl px-2 sm:px-4 py-3 h-[calc(100vh-5rem)]"><IdeaBoard /></div>}
       {activeTab === 'database' && <DatabaseView />}
