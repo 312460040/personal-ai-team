@@ -1,155 +1,29 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request } from 'express';
 
 const router = Router();
-
-function configured() {
-  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
-
-async function supabase(path: string, options: RequestInit = {}) {
-  const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!base || !key) return null;
-  const response = await fetch(`${base}/rest/v1/${path}`, {
-    ...options,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation',
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) throw new Error(`Supabase ${response.status}: ${await response.text()}`);
-  return response.status === 204 ? null : response.json();
-}
-
-async function ensureUser(ownerId: string) {
-  const rows = await supabase(`users?external_id=eq.${encodeURIComponent(ownerId)}&select=id`);
-  if (Array.isArray(rows) && rows[0]?.id) return rows[0].id as string;
-  const created = await supabase('users', { method: 'POST', body: JSON.stringify({ external_id: ownerId, display_name: ownerId }) });
-  return Array.isArray(created) ? created[0]?.id : null;
-}
-
-function ownerId(req: Request) {
-  return String(req.header('x-owner-id') || 'personal-owner');
-}
-
-router.get('/health', (_req, res) => {
-  res.json({ configured: configured(), provider: configured() ? 'supabase-postgresql' : 'not-configured' });
-});
-
-router.use(async (req, res, next) => {
-  if (!configured()) return res.status(503).json({ error: 'Persistence database is not configured' });
-  try {
-    const userId = await ensureUser(ownerId(req));
-    if (!userId) return res.status(500).json({ error: 'Unable to resolve owner' });
-    res.locals.userId = userId;
-    next();
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-const VIEWABLE_TABLES = ['users','projects','tasks','conversations','work_records','memories','focus_sessions','calendar_events','diagnosis_records','adaptive_proposals','study_subjects','today_blocks'] as const;
-type ViewableTable = typeof VIEWABLE_TABLES[number];
-function isViewableTable(value: string): value is ViewableTable { return (VIEWABLE_TABLES as readonly string[]).includes(value); }
-
-async function readTable(table: ViewableTable, userId: string, limit?: number) {
-  const boundedLimit = Math.min(Math.max(limit || 100, 1), 500);
-  if (table === 'users') return supabase(`users?id=eq.${encodeURIComponent(userId)}&select=id,external_id,display_name,created_at&limit=1`);
-  return supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc&limit=${boundedLimit}`);
-}
-
-router.get('/tables', async (_req, res) => {
-  try {
-    const userId = res.locals.userId as string;
-    const results = await Promise.all(VIEWABLE_TABLES.map(async (table) => {
-      const rows = await readTable(table, userId, 200);
-      return { table, count: Array.isArray(rows) ? rows.length : 0 };
-    }));
-    res.json(results);
-  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
-});
-
-router.get('/tables/:table', async (req, res) => {
-  const table = req.params.table;
-  if (!isViewableTable(table)) return res.status(400).json({ error: 'Table is not available in the read-only explorer' });
-  try {
-    const rows = await readTable(table, res.locals.userId as string, Number(req.query.limit) || 100);
-    res.json({ table, rows: Array.isArray(rows) ? rows : [] });
-  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
-});
-
-function mapProject(p: any, userId: string) { return { id: String(p.id), user_id: userId, workspace_id: p.workspaceId || 'work', title: p.title || '未命名專案', description: p.description || null, status: p.status || 'planning', priority: p.priority || 'medium', deadline: p.deadline || null, source: p.source || 'user', created_at: p.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }; }
-function mapTask(t: any, userId: string, domain: 'work'|'study') { return { id: String(t.id), user_id: userId, project_id: domain === 'work' ? (t.projectId || null) : null, subject_id: domain === 'study' ? (t.subjectId || null) : null, domain, title: t.title || '未命名任務', status: t.status || 'todo', priority: t.priority || 'medium', start_at: t.startDate ? new Date(t.startDate).toISOString() : null, deadline: t.deadline || null, estimated_hours: Number(t.estimatedHours || 0), actual_hours: null, progress: Number(t.progress || 0), notes: t.notes || null, source: t.source || 'user', created_at: t.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }; }
-function mapSubject(s: any, userId: string) { return { id: String(s.id), user_id: userId, name: s.name || '未命名科目', code: s.code || '', credits: Number(s.credits || 0), progress: Number(s.progress || 0), next_exam_date: s.nextExamDate || null, supervisor_tone: s.supervisorTone || null, teacher_or_notes: s.teacherOrNotes || null, status: s.status || 'in_progress', focus_topics: s.focusTopics || [], source: s.source || 'user', created_at: s.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }; }
-function mapBlock(b: any, userId: string) { return { id: String(b.id), user_id: userId, time_range: b.timeRange || '', type: b.type || 'buffer', title: b.title || '時間區塊', agent_owner: b.agentOwner || 'manager', target_duration_min: Number(b.targetDurationMin || 0), completed: Boolean(b.completed), notes: b.notes || null, source: b.source || 'user', created_at: b.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }; }
-
-router.get('/snapshot', async (_req, res) => {
-  try {
-    const userId = res.locals.userId as string;
-    const [projects, tasks, subjects, blocks] = await Promise.all([
-      supabase(`projects?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`),
-      supabase(`tasks?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`),
-      supabase(`study_subjects?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`),
-      supabase(`today_blocks?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`),
-    ]);
-    res.json({ ok: true, data: { projects: projects || [], tasks: tasks || [], studySubjects: subjects || [], todayBlocks: blocks || [] } });
-  } catch (error) { res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
-});
-
-async function syncCollection(table: string, rows: any[], userId: string) {
-  const incoming = Array.isArray(rows) ? rows : [];
-  const existing = await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=id`);
-  const existingIds = new Set((Array.isArray(existing) ? existing : []).map((r: any) => String(r.id)));
-  const incomingIds = new Set(incoming.map((r: any) => String(r.id)));
-  if (incoming.length) await supabase(table, { method: 'POST', body: JSON.stringify(incoming), headers: { Prefer: 'resolution=merge-duplicates,return=representation' } });
-  const stale = [...existingIds].filter(id => !incomingIds.has(id));
-  if (stale.length) await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&id=in.(${stale.map(encodeURIComponent).join(',')})`, { method: 'DELETE' });
-}
-
-router.post('/sync', async (req, res) => {
-  try {
-    const userId = res.locals.userId as string;
-    const body = req.body || {};
-    await syncCollection('projects', (body.projects || []).map((p: any) => mapProject(p, userId)), userId);
-    await syncCollection('tasks', (body.workTasks || []).filter((t: any) => t?.source === 'user').map((t: any) => mapTask(t, userId, 'work')), userId);
-    await syncCollection('tasks', (body.studyTasks || []).filter((t: any) => t?.source === 'user').map((t: any) => mapTask(t, userId, 'study')), userId);
-    await syncCollection('study_subjects', (body.studySubjects || []).filter((s: any) => s?.source === 'user').map((s: any) => mapSubject(s, userId)), userId);
-    await syncCollection('today_blocks', (body.todayBlocks || []).filter((b: any) => b?.source === 'user').map((b: any) => mapBlock(b, userId)), userId);
-    res.json({ ok: true, syncedAt: new Date().toISOString() });
-  } catch (error) { res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
-});
-
-router.post('/conversations', async (req, res) => {
-  try { const body=req.body||{}; const rows=await supabase('conversations',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,session_id:body.sessionId||'default',role:body.role||'user',agent_id:body.agentId||null,content:body.content||'',project_id:body.projectId||null,task_id:body.taskId||null})}); res.json({id:rows?.[0]?.id,record:rows?.[0]}); }
-  catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}
-});
-
-router.post('/work-records', async (req, res) => {
-  try { const body=req.body||{}; const rows=await supabase('work_records',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,conversation_id:body.conversationId||null,project_id:body.projectId||null,task_id:body.taskId||null,type:body.type||'note',title:body.title||'工作紀錄',content:body.content||'',created_by:body.createdBy||'system'})}); res.json({id:rows?.[0]?.id,record:rows?.[0]}); }
-  catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}
-});
-
-router.post('/focus-sessions', async (req, res) => {
-  try { const body=req.body||{}; const rows=await supabase('focus_sessions',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,task_id:body.taskId||null,planned_minutes:Number(body.plannedMinutes)||1,actual_minutes:body.actualMinutes==null?null:Number(body.actualMinutes),started_at:body.startedAt,ended_at:body.endedAt||null,completed:Boolean(body.completed),interruption_count:Number(body.interruptionCount)||0})}); res.json({id:rows?.[0]?.id,record:rows?.[0]}); }
-  catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}
-});
-
-router.post('/memories', async (req, res) => {
-  try { const body=req.body||{}; const rows=await supabase('memories',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,domain:body.domain||'global',type:body.type||'semantic',content:body.content||'',source:body.source||'observed',confidence:body.confidence??0.5,project_id:body.projectId||null,task_id:body.taskId||null,evidence_count:Number(body.evidenceCount)||1})}); res.json(rows||[]); }
-  catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}
-});
-
-router.post('/memories/search', async (req, res) => {
-  try { const body=req.body||{}; const domain=body.domain||'global'; const project=body.projectId?`&project_id=eq.${encodeURIComponent(body.projectId)}`:''; const task=body.taskId?`&task_id=eq.${encodeURIComponent(body.taskId)}`:''; const text=String(body.query||'').trim(); const textFilter=text?`&content=ilike.*${encodeURIComponent(text)}*`:''; const rows=await supabase(`memories?user_id=eq.${res.locals.userId}&domain=eq.${encodeURIComponent(domain)}${project}${task}${textFilter}&select=id,type,content,confidence,source,project_id,task_id,evidence_count,updated_at&order=updated_at.desc&limit=${Math.min(Number(body.limit)||20,100)}`); res.json(rows||[]); }
-  catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}
-});
-
-router.get('/calendar-events', async (req, res) => {
-  try { const from=req.query.from?`&start_at=gte.${encodeURIComponent(String(req.query.from))}`:''; const to=req.query.to?`&end_at=lte.${encodeURIComponent(String(req.query.to))}`:''; const rows=await supabase(`calendar_events?user_id=eq.${res.locals.userId}${from}${to}&select=id,title,start_at,end_at,calendar_id,status,google_event_id&order=start_at.asc&limit=200`); res.json((rows||[]).map((r:any)=>({id:r.id,title:r.title,startAt:r.start_at,endAt:r.end_at,calendarId:r.calendar_id,status:r.status,googleEventId:r.google_event_id}))); }
-  catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}
-});
-
+function configured(){return Boolean(process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY)}
+async function supabase(path:string,options:RequestInit={}){const base=process.env.SUPABASE_URL,key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!base||!key)return null;const response=await fetch(`${base}/rest/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:'return=representation',...(options.headers||{})}});if(!response.ok)throw new Error(`Supabase ${response.status}: ${await response.text()}`);return response.status===204?null:response.json()}
+async function ensureUser(ownerId:string){const rows=await supabase(`users?external_id=eq.${encodeURIComponent(ownerId)}&select=id`);if(Array.isArray(rows)&&rows[0]?.id)return rows[0].id as string;const created=await supabase('users',{method:'POST',body:JSON.stringify({external_id:ownerId,display_name:ownerId})});return Array.isArray(created)?created[0]?.id:null}
+function ownerId(req:Request){return String(req.header('x-owner-id')||'personal-owner')}
+router.get('/health',(_req,res)=>res.json({configured:configured(),provider:configured()?'supabase-postgresql':'not-configured'}));
+router.use(async(req,res,next)=>{if(!configured())return res.status(503).json({error:'Persistence database is not configured'});try{const userId=await ensureUser(ownerId(req));if(!userId)return res.status(500).json({error:'Unable to resolve owner'});res.locals.userId=userId;next()}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+const VIEWABLE_TABLES=['users','projects','tasks','conversations','work_records','memories','focus_sessions','calendar_events','diagnosis_records','adaptive_proposals','study_subjects','today_blocks'] as const;
+type ViewableTable=typeof VIEWABLE_TABLES[number];
+function isViewableTable(value:string):value is ViewableTable{return(VIEWABLE_TABLES as readonly string[]).includes(value)}
+async function readTable(table:ViewableTable,userId:string,limit?:number){const bounded=Math.min(Math.max(limit||100,1),500);if(table==='users')return supabase(`users?id=eq.${encodeURIComponent(userId)}&select=id,external_id,display_name,created_at&limit=1`);return supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc&limit=${bounded}`)}
+router.get('/tables',async(_req,res)=>{try{const userId=res.locals.userId as string;const results=await Promise.all(VIEWABLE_TABLES.map(async table=>{const rows=await readTable(table,userId,200);return{table,count:Array.isArray(rows)?rows.length:0}}));res.json(results)}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.get('/tables/:table',async(req,res)=>{const table=req.params.table;if(!isViewableTable(table))return res.status(400).json({error:'Table is not available in the read-only explorer'});try{const rows=await readTable(table,res.locals.userId as string,Number(req.query.limit)||100);res.json({table,rows:Array.isArray(rows)?rows:[]})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+function mapProject(p:any,userId:string){return{id:String(p.id),user_id:userId,workspace_id:p.workspaceId||'work',title:p.title||'未命名專案',description:p.description||null,status:p.status||'planning',priority:p.priority||'medium',deadline:p.deadline||null,source:p.source||'user',created_at:p.createdAt||new Date().toISOString(),updated_at:new Date().toISOString()}}
+function mapTask(t:any,userId:string,domain:'work'|'study'){return{id:String(t.id),user_id:userId,project_id:domain==='work'?(t.projectId||null):null,subject_id:domain==='study'?(t.subjectId||null):null,domain,title:t.title||'未命名任務',status:t.status||'todo',priority:t.priority||'medium',start_at:t.startDate?new Date(t.startDate).toISOString():null,deadline:t.deadline||null,estimated_hours:Number(t.estimatedHours||0),actual_hours:null,progress:Number(t.progress||0),notes:t.notes||null,source:t.source||'user',created_at:t.createdAt||new Date().toISOString(),updated_at:new Date().toISOString()}}
+function mapSubject(s:any,userId:string){return{id:String(s.id),user_id:userId,name:s.name||'未命名科目',code:s.code||'',credits:Number(s.credits||0),progress:Number(s.progress||0),next_exam_date:s.nextExamDate||null,supervisor_tone:s.supervisorTone||null,teacher_or_notes:s.teacherOrNotes||null,status:s.status||'in_progress',focus_topics:s.focusTopics||[],source:s.source||'user',created_at:s.createdAt||new Date().toISOString(),updated_at:new Date().toISOString()}}
+function mapBlock(b:any,userId:string){return{id:String(b.id),user_id:userId,time_range:b.timeRange||'',type:b.type||'buffer',title:b.title||'時間區塊',agent_owner:b.agentOwner||'manager',target_duration_min:Number(b.targetDurationMin||0),completed:Boolean(b.completed),notes:b.notes||null,source:b.source||'user',created_at:b.createdAt||new Date().toISOString(),updated_at:new Date().toISOString()}}
+router.get('/snapshot',async(_req,res)=>{try{const userId=res.locals.userId as string;const[projects,tasks,subjects,blocks]=await Promise.all([supabase(`projects?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`),supabase(`tasks?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`),supabase(`study_subjects?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`),supabase(`today_blocks?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=*`)]);res.json({ok:true,data:{projects:projects||[],tasks:tasks||[],studySubjects:subjects||[],todayBlocks:blocks||[]}})}catch(error){res.status(500).json({ok:false,error:error instanceof Error?error.message:String(error)})}});
+async function syncCollection(table:string,rows:any[],userId:string){const incoming=Array.isArray(rows)?rows:[];const existing=await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&select=id`);const existingIds=new Set((Array.isArray(existing)?existing:[]).map((r:any)=>String(r.id)));const incomingIds=new Set(incoming.map((r:any)=>String(r.id)));if(incoming.length)await supabase(table,{method:'POST',body:JSON.stringify(incoming),headers:{Prefer:'resolution=merge-duplicates,return=representation'}});const stale=[...existingIds].filter(id=>!incomingIds.has(id));if(stale.length)await supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&source=eq.user&id=in.(${stale.map(encodeURIComponent).join(',')})`,{method:'DELETE'})}
+router.post('/sync',async(req,res)=>{try{const userId=res.locals.userId as string;const body=req.body||{};const work=(body.workTasks||[]).filter((t:any)=>t?.source==='user').map((t:any)=>mapTask(t,userId,'work'));const study=(body.studyTasks||[]).filter((t:any)=>t?.source==='user').map((t:any)=>mapTask(t,userId,'study'));await syncCollection('projects',(body.projects||[]).filter((p:any)=>p?.source==='user').map((p:any)=>mapProject(p,userId)),userId);await syncCollection('tasks',[...work,...study],userId);await syncCollection('study_subjects',(body.studySubjects||[]).filter((s:any)=>s?.source==='user').map((s:any)=>mapSubject(s,userId)),userId);await syncCollection('today_blocks',(body.todayBlocks||[]).filter((b:any)=>b?.source==='user').map((b:any)=>mapBlock(b,userId)),userId);res.json({ok:true,syncedAt:new Date().toISOString()})}catch(error){res.status(500).json({ok:false,error:error instanceof Error?error.message:String(error)})}});
+router.post('/conversations',async(req,res)=>{try{const body=req.body||{};const rows=await supabase('conversations',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,session_id:body.sessionId||'default',role:body.role||'user',agent_id:body.agentId||null,content:body.content||'',project_id:body.projectId||null,task_id:body.taskId||null})});res.json({id:rows?.[0]?.id,record:rows?.[0]})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.post('/work-records',async(req,res)=>{try{const body=req.body||{};const rows=await supabase('work_records',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,conversation_id:body.conversationId||null,project_id:body.projectId||null,task_id:body.taskId||null,type:body.type||'note',title:body.title||'工作紀錄',content:body.content||'',created_by:body.createdBy||'system'})});res.json({id:rows?.[0]?.id,record:rows?.[0]})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.post('/focus-sessions',async(req,res)=>{try{const body=req.body||{};const rows=await supabase('focus_sessions',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,task_id:body.taskId||null,planned_minutes:Number(body.plannedMinutes)||1,actual_minutes:body.actualMinutes==null?null:Number(body.actualMinutes),started_at:body.startedAt,ended_at:body.endedAt||null,completed:Boolean(body.completed),interruption_count:Number(body.interruptionCount)||0})});res.json({id:rows?.[0]?.id,record:rows?.[0]})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.post('/memories',async(req,res)=>{try{const body=req.body||{};const rows=await supabase('memories',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,domain:body.domain||'global',type:body.type||'semantic',content:body.content||'',source:body.source||'observed',confidence:body.confidence??0.5,project_id:body.projectId||null,task_id:body.taskId||null,evidence_count:Number(body.evidenceCount)||1})});res.json(rows||[])}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.post('/memories/search',async(req,res)=>{try{const body=req.body||{};const domain=body.domain||'global';const project=body.projectId?`&project_id=eq.${encodeURIComponent(body.projectId)}`:'';const task=body.taskId?`&task_id=eq.${encodeURIComponent(body.taskId)}`:'';const text=String(body.query||'').trim();const textFilter=text?`&content=ilike.*${encodeURIComponent(text)}*`:'';const rows=await supabase(`memories?user_id=eq.${res.locals.userId}&domain=eq.${encodeURIComponent(domain)}${project}${task}${textFilter}&select=id,type,content,confidence,source,project_id,task_id,evidence_count,updated_at&order=updated_at.desc&limit=${Math.min(Number(body.limit)||20,100)}`);res.json(rows||[])}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.get('/calendar-events',async(req,res)=>{try{const from=req.query.from?`&start_at=gte.${encodeURIComponent(String(req.query.from))}`:'';const to=req.query.to?`&end_at=lte.${encodeURIComponent(String(req.query.to))}`:'';const rows=await supabase(`calendar_events?user_id=eq.${res.locals.userId}${from}${to}&select=id,title,start_at,end_at,calendar_id,status,google_event_id&order=start_at.asc&limit=200`);res.json((rows||[]).map((r:any)=>({id:r.id,title:r.title,startAt:r.start_at,endAt:r.end_at,calendarId:r.calendar_id,status:r.status,googleEventId:r.google_event_id})))}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
 export default router;
