@@ -25,3 +25,5 @@ services:
         sync: false
       - key: FRONTEND_ORIGIN
         value: https://312460040.github.io
+
+# Render deployment validation: frontend + backend production build is now CI-tested.
