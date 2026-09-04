@@ -1,187 +1,22 @@
 import { Router, type Request } from 'express';
-
-const router = Router();
-const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
-const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
-
-function configured() {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
-
-function ownerId(req: Request) {
-  return String(req.header('x-owner-id') || 'personal-owner');
-}
-
-async function supabase(path: string, options: RequestInit = {}) {
-  const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!base || !key) return null;
-  const response = await fetch(`${base}/rest/v1/${path}`, {
-    ...options,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation',
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) throw new Error(`Supabase ${response.status}: ${await response.text()}`);
-  return response.status === 204 ? null : response.json();
-}
-
-async function ensureUser(externalId: string) {
-  const rows = await supabase(`users?external_id=eq.${encodeURIComponent(externalId)}&select=id`);
-  if (Array.isArray(rows) && rows[0]?.id) return rows[0].id as string;
-  const created = await supabase('users', { method: 'POST', body: JSON.stringify({ external_id: externalId, display_name: externalId }) });
-  return Array.isArray(created) ? created[0]?.id as string : null;
-}
-
-function parseCookies(req: Request) {
-  const raw = req.header('cookie') || '';
-  return Object.fromEntries(raw.split(';').map(x => x.trim().split('=' as any)).filter(x => x.length === 2).map(([k, v]) => [k, decodeURIComponent(v)]));
-}
-
-function setCookie(res: any, name: string, value: string, maxAge: number) {
-  res.setHeader('Set-Cookie', `${name}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`);
-}
-
-function clearCookie(res: any, name: string) {
-  res.setHeader('Set-Cookie', `${name}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`);
-}
-
-async function getConnection(userId: string) {
-  const rows = await supabase(`calendar_connections?user_id=eq.${encodeURIComponent(userId)}&select=*&limit=1`);
-  return Array.isArray(rows) ? rows[0] : null;
-}
-
-async function getAccessToken(connection: any) {
-  if (connection.access_token && connection.expires_at && new Date(connection.expires_at).getTime() > Date.now() + 60_000) return connection.access_token;
-  if (!connection.refresh_token) throw new Error('Google Calendar refresh token is missing');
-  const body = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID || '', client_secret: process.env.GOOGLE_CLIENT_SECRET || '', refresh_token: connection.refresh_token, grant_type: 'refresh_token' });
-  const response = await fetch(GOOGLE_TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
-  const data = await response.json();
-  if (!response.ok || !data.access_token) throw new Error(`Google token refresh failed: ${JSON.stringify(data)}`);
-  await supabase(`calendar_connections?id=eq.${encodeURIComponent(connection.id)}`, { method: 'PATCH', body: JSON.stringify({ access_token: data.access_token, expires_at: new Date(Date.now() + Number(data.expires_in || 3600) * 1000).toISOString(), updated_at: new Date().toISOString() }) });
-  return data.access_token as string;
-}
-
-async function google(path: string, token: string, options: RequestInit = {}) {
-  const response = await fetch(`${CALENDAR_API}${path}`, { ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) } });
-  const data = await response.json();
-  if (!response.ok) throw new Error(`Google Calendar ${response.status}: ${JSON.stringify(data)}`);
-  return data;
-}
-
-router.get('/status', async (req, res) => {
-  if (!configured()) return res.json({ configured: false, connected: false, message: 'Google Calendar 尚未完成伺服器設定' });
-  try {
-    const userId = await ensureUser(ownerId(req));
-    const connection = userId ? await getConnection(userId) : null;
-    res.json({ configured: true, connected: Boolean(connection), email: connection?.google_email || null, calendarId: connection?.calendar_id || 'primary' });
-  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
-});
-
-router.get('/auth', async (req, res) => {
-  if (!configured()) return res.status(503).json({ error: 'Google Calendar OAuth is not configured on the server' });
-  const state = `${ownerId(req)}:${crypto.randomUUID()}`;
-  setCookie(res, 'ait_google_calendar_state', state, 600);
-  const url = new URL(GOOGLE_AUTH_URL);
-  url.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID!);
-  url.searchParams.set('redirect_uri', process.env.GOOGLE_REDIRECT_URI!);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', CALENDAR_SCOPE);
-  url.searchParams.set('access_type', 'offline');
-  url.searchParams.set('prompt', 'consent');
-  url.searchParams.set('state', state);
-  res.redirect(url.toString());
-});
-
-router.get('/oauth/callback', async (req, res) => {
-  try {
-    const state = String(req.query.state || '');
-    const stored = parseCookies(req).ait_google_calendar_state || '';
-    if (!state || state !== stored) return res.status(400).send('Google Calendar OAuth state 驗證失敗，請重新連接。');
-    clearCookie(res, 'ait_google_calendar_state');
-    const code = String(req.query.code || '');
-    if (!code) return res.status(400).send(`Google Calendar 授權失敗：${String(req.query.error || 'missing_code')}`);
-    const externalOwnerId = state.split(':')[0] || 'personal-owner';
-    const userId = await ensureUser(externalOwnerId);
-    if (!userId) return res.status(500).send('無法建立 Owner 資料。');
-    const body = new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID || '', client_secret: process.env.GOOGLE_CLIENT_SECRET || '', redirect_uri: process.env.GOOGLE_REDIRECT_URI || '', grant_type: 'authorization_code' });
-    const tokenResponse = await fetch(GOOGLE_TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
-    const token = await tokenResponse.json();
-    if (!tokenResponse.ok || !token.access_token) return res.status(400).send(`Google token exchange failed: ${JSON.stringify(token)}`);
-    const profile = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${token.access_token}` } }).then(r => r.json());
-    const existing = await getConnection(userId);
-    const record = { user_id: userId, provider: 'google', google_email: profile.email || null, calendar_id: 'primary', access_token: token.access_token, refresh_token: token.refresh_token || existing?.refresh_token || null, expires_at: new Date(Date.now() + Number(token.expires_in || 3600) * 1000).toISOString(), scopes: [CALENDAR_SCOPE], updated_at: new Date().toISOString() };
-    if (existing) await supabase(`calendar_connections?id=eq.${encodeURIComponent(existing.id)}`, { method: 'PATCH', body: JSON.stringify(record) });
-    else await supabase('calendar_connections', { method: 'POST', body: JSON.stringify(record) });
-    const origin = process.env.FRONTEND_ORIGIN || 'https://312460040.github.io';
-    res.redirect(`${origin}/personal-ai-team/?calendar=connected`);
-  } catch (error) { res.status(500).send(`Google Calendar 連線失敗：${error instanceof Error ? error.message : String(error)}`); }
-});
-
-router.get('/events', async (req, res) => {
-  try {
-    const userId = await ensureUser(ownerId(req));
-    if (!userId) return res.status(500).json({ error: 'Unable to resolve owner' });
-    const connection = await getConnection(userId);
-    if (!connection) return res.status(409).json({ connected: false, error: 'Google Calendar 尚未連接' });
-    const token = await getAccessToken(connection);
-    const from = String(req.query.from || new Date().toISOString());
-    const to = String(req.query.to || new Date(Date.now() + 14 * 86400000).toISOString());
-    const data = await google(`/calendars/${encodeURIComponent(connection.calendar_id || 'primary')}/events?singleEvents=true&orderBy=startTime&timeMin=${encodeURIComponent(from)}&timeMax=${encodeURIComponent(to)}&maxResults=250`, token);
-    const events = (data.items || []).filter((e: any) => e.status !== 'cancelled' && e.start?.dateTime && e.end?.dateTime).map((e: any) => ({ googleEventId: e.id, calendarId: connection.calendar_id || 'primary', title: e.summary || '(無標題)', description: e.description || null, startAt: e.start.dateTime, endAt: e.end.dateTime, status: e.status || 'confirmed' }));
-    if (events.length) await supabase('calendar_events', { method: 'POST', body: JSON.stringify(events.map((e: any) => ({ user_id: userId, google_event_id: e.googleEventId, calendar_id: e.calendarId, title: e.title, description: e.description, start_at: e.startAt, end_at: e.endAt, status: e.status, last_synced_at: new Date().toISOString() }))), headers: { Prefer: 'resolution=merge-duplicates,return=representation' } });
-    res.json({ connected: true, events });
-  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
-});
-
-function requireOwnerConfirmation(req: Request, res: any) {
-  if (req.header('x-owner-confirmed') !== 'true') { res.status(403).json({ error: 'Calendar 寫入操作需要 Owner 明確確認', requiresOwnerConfirmation: true }); return false; }
-  return true;
-}
-
-router.post('/events', async (req, res) => {
-  if (!requireOwnerConfirmation(req, res)) return;
-  try {
-    const userId = await ensureUser(ownerId(req)); const connection = userId ? await getConnection(userId) : null;
-    if (!connection) return res.status(409).json({ error: 'Google Calendar 尚未連接' });
-    const token = await getAccessToken(connection); const body = req.body || {};
-    const created = await google(`/calendars/${encodeURIComponent(connection.calendar_id || 'primary')}/events`, token, { method: 'POST', body: JSON.stringify({ summary: body.title, description: body.description || '', start: { dateTime: body.startAt }, end: { dateTime: body.endAt } }) });
-    await supabase('calendar_events', { method: 'POST', body: JSON.stringify({ user_id: userId, google_event_id: created.id, calendar_id: connection.calendar_id || 'primary', title: created.summary || body.title, description: created.description || null, start_at: created.start.dateTime, end_at: created.end.dateTime, status: created.status || 'confirmed', last_synced_at: new Date().toISOString() }) });
-    res.json({ ok: true, event: created });
-  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
-});
-
-router.patch('/events/:eventId', async (req, res) => {
-  if (!requireOwnerConfirmation(req, res)) return;
-  try {
-    const userId = await ensureUser(ownerId(req)); const connection = userId ? await getConnection(userId) : null;
-    if (!connection) return res.status(409).json({ error: 'Google Calendar 尚未連接' });
-    const token = await getAccessToken(connection); const body = req.body || {}; const patch: any = {};
-    if (body.title !== undefined) patch.summary = body.title;
-    if (body.description !== undefined) patch.description = body.description;
-    if (body.startAt !== undefined) patch.start = { dateTime: body.startAt };
-    if (body.endAt !== undefined) patch.end = { dateTime: body.endAt };
-    const updated = await google(`/calendars/${encodeURIComponent(connection.calendar_id || 'primary')}/events/${encodeURIComponent(req.params.eventId)}`, token, { method: 'PATCH', body: JSON.stringify(patch) });
-    await supabase(`calendar_events?user_id=eq.${encodeURIComponent(userId)}&google_event_id=eq.${encodeURIComponent(req.params.eventId)}`, { method: 'PATCH', body: JSON.stringify({ title: updated.summary || '', description: updated.description || null, start_at: updated.start?.dateTime, end_at: updated.end?.dateTime, status: updated.status || 'confirmed', last_synced_at: new Date().toISOString() }) });
-    res.json({ ok: true, event: updated });
-  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
-});
-
-router.delete('/events/:eventId', async (req, res) => {
-  if (!requireOwnerConfirmation(req, res)) return;
-  try {
-    const userId = await ensureUser(ownerId(req)); const connection = userId ? await getConnection(userId) : null;
-    if (!connection) return res.status(409).json({ error: 'Google Calendar 尚未連接' });
-    const token = await getAccessToken(connection); await google(`/calendars/${encodeURIComponent(connection.calendar_id || 'primary')}/events/${encodeURIComponent(req.params.eventId)}`, token, { method: 'DELETE' });
-    await supabase(`calendar_events?user_id=eq.${encodeURIComponent(userId)}&google_event_id=eq.${encodeURIComponent(req.params.eventId)}`, { method: 'DELETE' });
-    res.json({ ok: true, deleted: req.params.eventId });
-  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
-});
-
+const router=Router();
+const GOOGLE_AUTH_URL='https://accounts.google.com/o/oauth2/v2/auth';const GOOGLE_TOKEN_URL='https://oauth2.googleapis.com/token';const CALENDAR_API='https://www.googleapis.com/calendar/v3';const CALENDAR_SCOPE='https://www.googleapis.com/auth/calendar';
+function configured(){return Boolean(process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET&&process.env.GOOGLE_REDIRECT_URI&&process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY)}
+function ownerId(req:Request){return String(req.header('x-owner-id')||'personal-owner')}
+async function supabase(path:string,options:RequestInit={}){const base=process.env.SUPABASE_URL,key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!base||!key)return null;const response=await fetch(`${base}/rest/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:'return=representation',...(options.headers||{})}});if(!response.ok)throw new Error(`Supabase ${response.status}: ${await response.text()}`);return response.status===204?null:response.json()}
+async function ensureUser(externalId:string){const rows=await supabase(`users?external_id=eq.${encodeURIComponent(externalId)}&select=id`);if(Array.isArray(rows)&&rows[0]?.id)return rows[0].id as string;const created=await supabase('users',{method:'POST',body:JSON.stringify({external_id:externalId,display_name:externalId})});return Array.isArray(created)?created[0]?.id as string:null}
+function parseCookies(req:Request){const raw=req.header('cookie')||'';return Object.fromEntries(raw.split(';').map(x=>x.trim()).map(x=>{const i=x.indexOf('=');return i>0?[x.slice(0,i),decodeURIComponent(x.slice(i+1))]:[]}).filter(x=>x.length===2) as [string,string][])}
+function setCookie(res:any,name:string,value:string,maxAge:number){res.setHeader('Set-Cookie',`${name}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`)}
+function clearCookie(res:any,name:string){res.setHeader('Set-Cookie',`${name}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`)}
+async function getConnection(userId:string){const rows=await supabase(`calendar_connections?user_id=eq.${encodeURIComponent(userId)}&select=*&limit=1`);return Array.isArray(rows)?rows[0]:null}
+async function getAccessToken(connection:any){if(connection.access_token&&connection.expires_at&&new Date(connection.expires_at).getTime()>Date.now()+60000)return connection.access_token;if(!connection.refresh_token)throw new Error('Google Calendar refresh token is missing');const body=new URLSearchParams({client_id:process.env.GOOGLE_CLIENT_ID||'',client_secret:process.env.GOOGLE_CLIENT_SECRET||'',refresh_token:connection.refresh_token,grant_type:'refresh_token'});const response=await fetch(GOOGLE_TOKEN_URL,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const data=await response.json();if(!response.ok||!data.access_token)throw new Error(`Google token refresh failed: ${JSON.stringify(data)}`);await supabase(`calendar_connections?id=eq.${encodeURIComponent(connection.id)}`,{method:'PATCH',body:JSON.stringify({access_token:data.access_token,expires_at:new Date(Date.now()+Number(data.expires_in||3600)*1000).toISOString(),updated_at:new Date().toISOString()})});return data.access_token as string}
+async function google(path:string,token:string,options:RequestInit={}){const response=await fetch(`${CALENDAR_API}${path}`,{...options,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',...(options.headers||{})}});if(response.status===204)return null;const data=await response.json();if(!response.ok)throw new Error(`Google Calendar ${response.status}: ${JSON.stringify(data)}`);return data}
+router.get('/status',async(req,res)=>{if(!configured())return res.json({configured:false,connected:false,message:'Google Calendar 尚未完成伺服器設定'});try{const userId=await ensureUser(ownerId(req));const connection=userId?await getConnection(userId):null;res.json({configured:true,connected:Boolean(connection),email:connection?.google_email||null,calendarId:connection?.calendar_id||'primary'})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.get('/auth',async(req,res)=>{if(!configured())return res.status(503).json({error:'Google Calendar OAuth is not configured on the server'});const state=`${ownerId(req)}:${crypto.randomUUID()}`;setCookie(res,'ait_google_calendar_state',state,600);const url=new URL(GOOGLE_AUTH_URL);url.searchParams.set('client_id',process.env.GOOGLE_CLIENT_ID!);url.searchParams.set('redirect_uri',process.env.GOOGLE_REDIRECT_URI!);url.searchParams.set('response_type','code');url.searchParams.set('scope',CALENDAR_SCOPE);url.searchParams.set('access_type','offline');url.searchParams.set('prompt','consent');url.searchParams.set('state',state);res.redirect(url.toString())});
+router.get('/oauth/callback',async(req,res)=>{try{const state=String(req.query.state||'');const stored=parseCookies(req).ait_google_calendar_state||'';if(!state||state!==stored)return res.status(400).send('Google Calendar OAuth state 驗證失敗，請重新連接。');clearCookie(res,'ait_google_calendar_state');const code=String(req.query.code||'');if(!code)return res.status(400).send(`Google Calendar 授權失敗：${String(req.query.error||'missing_code')}`);const externalOwnerId=state.split(':')[0]||'personal-owner';const userId=await ensureUser(externalOwnerId);if(!userId)return res.status(500).send('無法建立 Owner 資料。');const body=new URLSearchParams({code,client_id:process.env.GOOGLE_CLIENT_ID||'',client_secret:process.env.GOOGLE_CLIENT_SECRET||'',redirect_uri:process.env.GOOGLE_REDIRECT_URI||'',grant_type:'authorization_code'});const tokenResponse=await fetch(GOOGLE_TOKEN_URL,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const token=await tokenResponse.json();if(!tokenResponse.ok||!token.access_token)return res.status(400).send(`Google token exchange failed: ${JSON.stringify(token)}`);const profile=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${token.access_token}`}}).then(r=>r.json());const existing=await getConnection(userId);const record={user_id:userId,provider:'google',google_email:profile.email||null,calendar_id:'primary',access_token:token.access_token,refresh_token:token.refresh_token||existing?.refresh_token||null,expires_at:new Date(Date.now()+Number(token.expires_in||3600)*1000).toISOString(),scopes:[CALENDAR_SCOPE],updated_at:new Date().toISOString()};if(existing)await supabase(`calendar_connections?id=eq.${encodeURIComponent(existing.id)}`,{method:'PATCH',body:JSON.stringify(record)});else await supabase('calendar_connections',{method:'POST',body:JSON.stringify(record)});const origin=process.env.FRONTEND_ORIGIN||'https://312460040.github.io';res.redirect(`${origin}/personal-ai-team/?calendar=connected`)}catch(error){res.status(500).send(`Google Calendar 連線失敗：${error instanceof Error?error.message:String(error)}`)}});
+router.get('/events',async(req,res)=>{try{const userId=await ensureUser(ownerId(req));if(!userId)return res.status(500).json({error:'Unable to resolve owner'});const connection=await getConnection(userId);if(!connection)return res.status(409).json({connected:false,error:'Google Calendar 尚未連接'});const token=await getAccessToken(connection);const from=String(req.query.from||new Date().toISOString());const to=String(req.query.to||new Date(Date.now()+14*86400000).toISOString());const data=await google(`/calendars/${encodeURIComponent(connection.calendar_id||'primary')}/events?singleEvents=true&orderBy=startTime&timeMin=${encodeURIComponent(from)}&timeMax=${encodeURIComponent(to)}&maxResults=250`,token);const events=(data.items||[]).filter((e:any)=>e.status!=='cancelled'&&e.start?.dateTime&&e.end?.dateTime).map((e:any)=>({googleEventId:e.id,calendarId:connection.calendar_id||'primary',title:e.summary||'(無標題)',description:e.description||null,startAt:e.start.dateTime,endAt:e.end.dateTime,status:e.status||'confirmed'}));if(events.length)await supabase('calendar_events',{method:'POST',body:JSON.stringify(events.map((e:any)=>({user_id:userId,google_event_id:e.googleEventId,calendar_id:e.calendarId,title:e.title,description:e.description,start_at:e.startAt,end_at:e.endAt,status:e.status,last_synced_at:new Date().toISOString()}))),headers:{Prefer:'resolution=merge-duplicates,return=representation'}});res.json({connected:true,events})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+function requireOwnerConfirmation(req:Request,res:any){if(req.header('x-owner-confirmed')!=='true'){res.status(403).json({error:'Calendar 寫入操作需要 Owner 明確確認',requiresOwnerConfirmation:true});return false}return true}
+router.post('/events',async(req,res)=>{if(!requireOwnerConfirmation(req,res))return;try{const userId=await ensureUser(ownerId(req));const connection=userId?await getConnection(userId):null;if(!connection)return res.status(409).json({error:'Google Calendar 尚未連接'});const token=await getAccessToken(connection),body=req.body||{};const created=await google(`/calendars/${encodeURIComponent(connection.calendar_id||'primary')}/events`,token,{method:'POST',body:JSON.stringify({summary:body.title,description:body.description||'',start:{dateTime:body.startAt},end:{dateTime:body.endAt}})});await supabase('calendar_events',{method:'POST',body:JSON.stringify({user_id:userId,google_event_id:created.id,calendar_id:connection.calendar_id||'primary',title:created.summary||body.title,description:created.description||null,start_at:created.start.dateTime,end_at:created.end.dateTime,status:created.status||'confirmed',last_synced_at:new Date().toISOString()})});res.json({ok:true,event:created})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.patch('/events/:eventId',async(req,res)=>{if(!requireOwnerConfirmation(req,res))return;try{const userId=await ensureUser(ownerId(req));const connection=userId?await getConnection(userId):null;if(!connection)return res.status(409).json({error:'Google Calendar 尚未連接'});const token=await getAccessToken(connection),body=req.body||{},patch:any={};if(body.title!==undefined)patch.summary=body.title;if(body.description!==undefined)patch.description=body.description;if(body.startAt!==undefined)patch.start={dateTime:body.startAt};if(body.endAt!==undefined)patch.end={dateTime:body.endAt};const updated=await google(`/calendars/${encodeURIComponent(connection.calendar_id||'primary')}/events/${encodeURIComponent(req.params.eventId)}`,token,{method:'PATCH',body:JSON.stringify(patch)});const dbPatch:any={last_synced_at:new Date().toISOString()};if(updated?.summary!==undefined)dbPatch.title=updated.summary;if(updated?.description!==undefined)dbPatch.description=updated.description||null;if(updated?.start?.dateTime)dbPatch.start_at=updated.start.dateTime;if(updated?.end?.dateTime)dbPatch.end_at=updated.end.dateTime;if(updated?.status)dbPatch.status=updated.status;await supabase(`calendar_events?user_id=eq.${encodeURIComponent(userId)}&google_event_id=eq.${encodeURIComponent(req.params.eventId)}`,{method:'PATCH',body:JSON.stringify(dbPatch)});res.json({ok:true,event:updated})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+router.delete('/events/:eventId',async(req,res)=>{if(!requireOwnerConfirmation(req,res))return;try{const userId=await ensureUser(ownerId(req));const connection=userId?await getConnection(userId):null;if(!connection)return res.status(409).json({error:'Google Calendar 尚未連接'});const token=await getAccessToken(connection);await google(`/calendars/${encodeURIComponent(connection.calendar_id||'primary')}/events/${encodeURIComponent(req.params.eventId)}`,token,{method:'DELETE'});await supabase(`calendar_events?user_id=eq.${encodeURIComponent(userId)}&google_event_id=eq.${encodeURIComponent(req.params.eventId)}`,{method:'DELETE'});res.json({ok:true,deleted:req.params.eventId})}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
 export default router;
