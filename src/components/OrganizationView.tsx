@@ -24,8 +24,22 @@ export default function OrganizationView() {
     } catch (e) { setError(e instanceof Error ? e.message : '無法讀取公司協作資料'); }
     finally { setLoading(false); }
   };
-  useEffect(() => { void load(); }, []);
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const activeHandoffs = useMemo(() => handoffs.filter(h => h.status !== 'completed'), [handoffs]);
+  const completedHandoffs = useMemo(() => handoffs.filter(h => h.status === 'completed').slice(0, 8), [handoffs]);
+  const resultByHandoff = useMemo(() => {
+    const map = new Map<string, AgentMessage>();
+    messages.forEach(message => {
+      if (message.handoffId && message.messageType === 'result' && !map.has(message.handoffId)) map.set(message.handoffId, message);
+    });
+    return map;
+  }, [messages]);
 
   return <div className="mx-auto max-w-7xl px-3 sm:px-5 pt-6 space-y-6">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -36,16 +50,20 @@ export default function OrganizationView() {
 
     <section className="grid gap-4 md:grid-cols-3">
       <div className="rounded-2xl border border-[#E5E2DC] bg-white p-5"><p className="text-xs font-semibold text-[#8A908B]">啟用 Agent</p><p className="mt-1 text-3xl font-bold">3</p><p className="mt-1 text-xs text-[#737A75]">Manager / Work / Study</p></div>
-      <div className="rounded-2xl border border-[#E5E2DC] bg-white p-5"><p className="text-xs font-semibold text-[#8A908B]">進行中交接</p><p className="mt-1 text-3xl font-bold">{activeHandoffs.length}</p><p className="mt-1 text-xs text-[#737A75]">跨部門任務等待處理</p></div>
+      <div className="rounded-2xl border border-[#E5E2DC] bg-white p-5"><p className="text-xs font-semibold text-[#8A908B]">進行中交接</p><p className="mt-1 text-3xl font-bold">{activeHandoffs.length}</p><p className="mt-1 text-xs text-[#737A75]">跨部門任務即時狀態</p></div>
       <div className="rounded-2xl border border-[#E5E2DC] bg-white p-5"><p className="text-xs font-semibold text-[#8A908B]">Agent 訊息</p><p className="mt-1 text-3xl font-bold">{messages.length}</p><p className="mt-1 text-xs text-[#737A75]">共享協作紀錄</p></div>
     </section>
 
     <section><div className="mb-3 flex items-center gap-2"><Users className="w-4 h-4" /><h2 className="font-bold">部門與職責</h2></div><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">{departments.map(dept => <div key={dept.id} className="rounded-2xl border border-[#E5E2DC] bg-white p-5"><div className="flex items-center justify-between"><span className="rounded-full bg-[#EEF2EF] px-2 py-1 text-xs font-semibold">{dept.name}</span><span className="text-xs text-[#8A908B]">主管：{labels[dept.headAgent] || dept.headAgent}</span></div><p className="mt-3 text-sm font-semibold">{dept.description}</p><div className="mt-3 space-y-1">{dept.agentIds.map(id => <div key={id} className="flex items-center gap-2 text-xs text-[#666D68]"><span className="h-2 w-2 rounded-full bg-[#5C7C66]" />{labels[id] || id}</div>)}</div></div>)}</div></section>
 
     <section className="grid gap-5 lg:grid-cols-2">
-      <div className="rounded-2xl border border-[#E5E2DC] bg-white overflow-hidden"><div className="border-b border-[#EBE8E1] px-5 py-4"><h2 className="font-bold flex items-center gap-2"><ArrowRight className="w-4 h-4" />任務交接</h2><p className="mt-1 text-xs text-[#8A908B]">Manager 不直接包辦所有工作，而是將任務交給最適合的部門。</p></div><div className="divide-y divide-[#F0EEE9]">{loading ? <p className="p-6 text-sm text-[#737A75]">讀取中…</p> : activeHandoffs.length === 0 ? <p className="p-6 text-sm text-[#737A75]">目前沒有待處理交接。當 Agent 開始真正跨部門工作後，這裡會留下完整紀錄。</p> : activeHandoffs.map(h => <div key={h.id} className="p-5"><div className="flex items-center gap-2 text-xs"><span className="font-semibold">{labels[h.fromAgent] || h.fromAgent}</span><ArrowRight className="w-3.5 h-3.5" /><span className="font-semibold">{labels[h.toAgent] || h.toAgent}</span><span className="ml-auto rounded-full bg-[#F3F1EC] px-2 py-1">{statusLabel[h.status] || h.status}</span></div><p className="mt-2 font-semibold">{h.title}</p><p className="mt-1 text-sm text-[#666D68]">{h.reason}</p><p className="mt-2 text-xs text-[#8A908B]">優先級：{h.priority}{h.deadline ? `｜截止：${h.deadline}` : ''}</p></div>)}</div></div>
+      <div className="rounded-2xl border border-[#E5E2DC] bg-white overflow-hidden"><div className="border-b border-[#EBE8E1] px-5 py-4"><h2 className="font-bold flex items-center gap-2"><ArrowRight className="w-4 h-4" />任務交接</h2><p className="mt-1 text-xs text-[#8A908B]">Manager 將任務交給最適合的部門，系統持續追蹤接手與完成狀態。</p></div><div className="divide-y divide-[#F0EEE9]">{loading ? <p className="p-6 text-sm text-[#737A75]">讀取中…</p> : activeHandoffs.length === 0 ? <p className="p-6 text-sm text-[#737A75]">目前沒有待處理交接。完成的交接會保留在下方的執行紀錄。</p> : activeHandoffs.map(h => <div key={h.id} className="p-5"><div className="flex items-center gap-2 text-xs"><span className="font-semibold">{labels[h.fromAgent] || h.fromAgent}</span><ArrowRight className="w-3.5 h-3.5" /><span className="font-semibold">{labels[h.toAgent] || h.toAgent}</span><span className="ml-auto rounded-full bg-[#F3F1EC] px-2 py-1">{statusLabel[h.status] || h.status}</span></div><p className="mt-2 font-semibold">{h.title}</p><p className="mt-1 text-sm text-[#666D68]">{h.reason}</p><p className="mt-2 text-xs text-[#8A908B]">優先級：{h.priority}{h.deadline ? `｜截止：${h.deadline}` : ''}</p></div>)}</div></div>
+
       <div className="rounded-2xl border border-[#E5E2DC] bg-white overflow-hidden"><div className="border-b border-[#EBE8E1] px-5 py-4"><h2 className="font-bold flex items-center gap-2"><MessageSquare className="w-4 h-4" />Agent-to-Agent Communication</h2><p className="mt-1 text-xs text-[#8A908B]">交接不是只有狀態；Agent 可以留下請求、問題與結果。</p></div><div className="divide-y divide-[#F0EEE9]">{messages.length === 0 ? <p className="p-6 text-sm text-[#737A75]">目前沒有 Agent 訊息。</p> : messages.slice(0, 12).map(m => <div key={m.id} className="p-4"><div className="flex items-center gap-2 text-xs"><span className="font-semibold">{labels[m.fromAgent] || m.fromAgent}</span><ArrowRight className="w-3 h-3" /><span className="font-semibold">{labels[m.toAgent] || m.toAgent}</span><span className="ml-auto text-[#9A9F9B]">{new Date(m.createdAt).toLocaleString('zh-TW')}</span></div><p className="mt-2 text-sm text-[#555D57]">{m.content}</p></div>)}</div></div>
     </section>
-    <div className="rounded-xl border border-[#E5E2DC] bg-[#F7F5F1] p-4 text-xs text-[#737A75] flex gap-2"><CheckCircle2 className="w-4 h-4 shrink-0" />下一階段會讓 Manager 在實際分流時建立 Handoff，專業 Agent 完成後回報結果，再由 Manager 決定是否結案或轉交下一部門。</div>
+
+    <section className="rounded-2xl border border-[#E5E2DC] bg-white overflow-hidden"><div className="border-b border-[#EBE8E1] px-5 py-4"><h2 className="font-bold flex items-center gap-2"><Clock3 className="w-4 h-4" />已完成交接與執行結果</h2><p className="mt-1 text-xs text-[#8A908B]">這裡顯示 specialist 實際執行後回報給 Manager 的結果，讓虛擬公司的工作流可被追蹤。</p></div><div className="divide-y divide-[#F0EEE9]">{completedHandoffs.length === 0 ? <p className="p-6 text-sm text-[#737A75]">尚無已完成的交接紀錄。</p> : completedHandoffs.map(h => { const result = resultByHandoff.get(h.id); return <div key={h.id} className="p-5"><div className="flex items-center gap-2 text-xs"><span className="font-semibold">{labels[h.fromAgent] || h.fromAgent}</span><ArrowRight className="w-3.5 h-3.5" /><span className="font-semibold">{labels[h.toAgent] || h.toAgent}</span><span className="ml-auto rounded-full bg-[#EEF2EF] px-2 py-1">{statusLabel[h.status]}</span></div><p className="mt-2 font-semibold">{h.title}</p><p className="mt-1 text-sm text-[#666D68]">{h.reason}</p>{result && <div className="mt-3 rounded-xl bg-[#F7F5F1] p-3"><p className="text-xs font-semibold text-[#737A75]">專業 Agent 回報</p><p className="mt-1 text-sm whitespace-pre-wrap text-[#555D57]">{result.content}</p></div>}<p className="mt-2 text-xs text-[#9A9F9B]">完成時間：{h.completedAt ? new Date(h.completedAt).toLocaleString('zh-TW') : '未提供'}</p></div>; })}</div></section>
+
+    <div className="rounded-xl border border-[#E5E2DC] bg-[#F7F5F1] p-4 text-xs text-[#737A75] flex gap-2"><CheckCircle2 className="w-4 h-4 shrink-0" />目前已具備「Manager 分流 → 建立 Handoff → specialist 執行 → 回報結果 → 留存紀錄」的協作骨架；後續再擴充更多部門與 Manager 的自動後續決策。</div>
   </div>;
 }
