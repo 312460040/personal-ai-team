@@ -2,7 +2,7 @@ import express from 'express';
 
 const router = express.Router();
 const APP_TIME_ZONE = 'Asia/Taipei';
-type Block = { time: string; type: 'work' | 'study' | 'rest' | 'buffer'; agentOwner: 'work' | 'study' | 'manager'; title: string; duration: string; priority?: 'high' | 'medium' | 'low'; tips?: string };
+type Block = { taskId?: string; time: string; type: 'work' | 'study' | 'rest' | 'buffer'; agentOwner: 'work' | 'study' | 'manager'; title: string; duration: string; priority?: 'high' | 'medium' | 'low'; tips?: string };
 
 function minutes(value: string) { const m = value.match(/(\d+(?:\.\d+)?)\s*(?:小時|hr|h)/i); return m ? Math.max(30, Math.round(Number(m[1]) * 60)) : 60; }
 function configured() { return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY); }
@@ -21,7 +21,7 @@ function buildSchedule(context: any, message: string, calendarEvents: any[] = []
   const blocks:Block[]=[];
   const nextFree=(start:number,dur:number,limit:number)=>{let s=start;while(s+dur<=limit){const conflict=events.find(e=>s<e.end&&s+dur>e.start);if(!conflict)return s;s=Math.max(s+10,conflict.end);}return null;};
   const fmt=(n:number)=>`${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`;
-  const addTask=(task:any,type:'work'|'study',start:number)=>{const dur=Math.min(minutes(String(task.estimatedHours||1)+'h'),type==='work'?150:120);const free=nextFree(start,dur,type==='work'?18*60:22*60);if(free===null)return null;const end=free+dur;blocks.push({time:`${fmt(free)} - ${fmt(end)}`,type,agentOwner:type,title:task.title,duration:`${dur} 分鐘`,priority:task.priority||'medium',tips:type==='work'?`專案：${task.projectName||'工作'}｜截止：${task.deadline||'未設定'}`:`科目：${task.subjectName||'學習'}｜截止：${task.deadline||'未設定'}`});return end;};
+  const addTask=(task:any,type:'work'|'study',start:number)=>{const dur=Math.min(minutes(String(task.estimatedHours||1)+'h'),type==='work'?150:120);const free=nextFree(start,dur,type==='work'?18*60:22*60);if(free===null)return null;const end=free+dur;blocks.push({taskId:String(task.id),time:`${fmt(free)} - ${fmt(end)}`,type,agentOwner:type,title:task.title,duration:`${dur} 分鐘`,priority:task.priority||'medium',tips:type==='work'?`專案：${task.projectName||'工作'}｜截止：${task.deadline||'未設定'}`:`科目：${task.subjectName||'學習'}｜截止：${task.deadline||'未設定'}`});return end;};
   let cursor=9*60; for(const task of work.slice(0,3)){const end=addTask(task,'work',cursor);if(end===null)break;cursor=end+10;if(cursor>=720)break;}
   blocks.push({time:'12:00 - 13:00',type:'rest',agentOwner:'manager',title:'午餐與休息',duration:'60 分鐘',tips:'Manager 保留恢復時間，不排工作。'});
   cursor=13*60+30; for(const task of work.slice(3)){if(cursor>=18*60)break;const end=addTask(task,'work',cursor);if(end===null)break;cursor=end+10;}
