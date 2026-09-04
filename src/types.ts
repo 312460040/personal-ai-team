@@ -1,11 +1,10 @@
-export type AgentId =
-  | 'manager' | 'work' | 'study' | 'schedule' | 'research' | 'brainstorm' | 'email' | 'finance' | 'social' | 'hr';
+export type AgentId = 'manager' | 'work' | 'study' | 'schedule' | 'research' | 'brainstorm' | 'email' | 'finance' | 'social' | 'hr';
 export type AgentStatus = 'active' | 'upcoming';
 export type DataSourceType = 'user' | 'demo';
 export type CreatedByType = 'user' | 'system';
 export interface AgentInfo { id: AgentId; name: string; roleName: string; tagline: string; description: string; status: AgentStatus; avatarIcon: string; colorScheme: { bg: string; text: string; border: string; ring: string; gradient: string }; responsibilities: string[]; }
-export type ActivityStepStatus = 'queued' | 'running' | 'completed' | 'warning';
 export interface AgentActivityLog { id: string; timestamp: string; stepIndex: number; fromAgent: AgentId; toAgent?: AgentId; action: string; summary: string; detail?: string; status: ActivityStepStatus; durationMs?: number; }
+export type ActivityStepStatus = 'queued' | 'running' | 'completed' | 'warning';
 export interface AgentExecutionAudit { requested: number; accepted: number; rejected: number; writeAuthorized: boolean; executionMode: 'single_agent' | 'parallel_specialists_then_manager'; finalAgent: AgentId; }
 export interface StructuredTimeBlock { time: string; type: 'work' | 'study' | 'rest' | 'buffer'; agentOwner: AgentId; title: string; duration: string; priority?: 'high' | 'medium' | 'low'; tips?: string; }
 export interface MultiAgentResult { intentType: 'WORK' | 'STUDY' | 'HYBRID' | 'GENERAL' | 'MENTAL_TASK_INTAKE'; delegatedAgents: AgentId[]; activityLogs: AgentActivityLog[]; workAgentOutput?: { summary: string; highPriorityTasks: string[]; suggestedDurationHours: number; breakdown: string }; studyAgentOutput?: { summary: string; focusSubject: string; studyPlan: string; supervisionNote: string; suggestedDurationHours: number }; finalSynthesisMarkdown: string; proposedTimeBlocks?: StructuredTimeBlock[]; createdTaskPayload?: any; }
@@ -17,4 +16,7 @@ export interface StudyTask { id: string; subjectId: string; subjectName: string;
 export interface TodayTimeBlock { id: string; timeRange: string; type: 'work' | 'study' | 'rest' | 'buffer'; title: string; agentOwner: AgentId; targetDurationMin: number; completed: boolean; notes?: string; source: DataSourceType; createdBy?: CreatedByType; }
 export interface Person { id: string; name: string; role?: string; email?: string; avatar?: string; source?: DataSourceType; createdBy?: CreatedByType; }
 export interface DiscussionRecord { id: string; timestamp: string; title: string; topic?: string; summary: string; participants: string[]; actionItems?: string[]; source?: DataSourceType; createdBy?: CreatedByType; }
+export interface AgentHandoff { id: string; fromAgent: AgentId; toAgent: AgentId; taskId?: string; projectId?: string; title: string; reason: string; priority: 'high' | 'medium' | 'low'; deadline?: string; status: 'waiting' | 'working' | 'completed' | 'return'; payload?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string; }
+export interface AgentMessage { id: string; fromAgent: AgentId; toAgent: AgentId; handoffId?: string; taskId?: string; messageType: 'note' | 'request' | 'result' | 'question'; content: string; metadata?: Record<string, unknown>; createdAt: string; }
+export interface CompanyDepartment { id: string; name: string; headAgent: AgentId; description: string; agentIds: AgentId[]; }
 export interface InitialAppState { workProjects: WorkProject[]; workTasks: WorkTask[]; studySubjects: StudySubject[]; studyTasks: StudyTask[]; discussionRecords: DiscussionRecord[]; people: Person[]; todayBlocks: TodayTimeBlock[]; }
