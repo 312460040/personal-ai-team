@@ -1,100 +1,11 @@
 import type { ChatMessage } from '../types';
-
-const API_BASE = '/api/persistence';
+import { apiUrl } from './apiBase';
+const API_BASE = apiUrl('/api/persistence');
 const OWNER_ID = 'personal-owner';
-
-async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
-  try {
-    const response = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json', 'x-owner-id': OWNER_ID, ...(options?.headers || {}) },
-      ...options,
-    });
-    if (!response.ok) {
-      console.warn(`[Persistence API] ${response.status} ${path}`);
-      return null;
-    }
-    const payload = await response.json();
-    return (payload?.data ?? payload) as T;
-  } catch (error) {
-    console.warn(`[Persistence API] request failed: ${path}`, error);
-    return null;
-  }
-}
-
-export function persistConversation(message: ChatMessage, sessionId: string, context?: { projectId?: string | null; taskId?: string | null; userId?: string }): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/conversations', {
-    method: 'POST',
-    body: JSON.stringify({
-      userId: context?.userId || OWNER_ID,
-      sessionId,
-      role: message.sender,
-      agentId: message.sender === 'manager' ? 'manager' : null,
-      content: message.text,
-      projectId: context?.projectId ?? null,
-      taskId: context?.taskId ?? null,
-      createdAt: new Date().toISOString(),
-    }),
-  });
-}
-
-export function persistWorkRecord(input: {
-  userId?: string;
-  type: string;
-  title: string;
-  content: string;
-  conversationId?: string | null;
-  projectId?: string | null;
-  taskId?: string | null;
-  createdBy?: 'user' | 'system';
-}): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/work-records', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) });
-}
-
-export function persistFocusSession(input: {
-  userId?: string;
-  taskId?: string | null;
-  plannedMinutes: number;
-  actualMinutes?: number;
-  startedAt: string;
-  endedAt?: string;
-  completed: boolean;
-  interruptionCount?: number;
-}): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/focus-sessions', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) });
-}
-
-export function persistMemory(input: {
-  userId?: string;
-  domain: 'global' | 'work' | 'study';
-  type: string;
-  content: string;
-  source?: 'owner' | 'observed' | 'inferred';
-  confidence?: number;
-  projectId?: string | null;
-  taskId?: string | null;
-  evidenceCount?: number;
-}): Promise<{ id: string } | null> {
-  return request<{ id: string }>('/memories', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) });
-}
-
-export async function getScopedMemories(input: {
-  userId?: string;
-  domain: 'global' | 'work' | 'study';
-  projectId?: string | null;
-  taskId?: string | null;
-  query?: string;
-  limit?: number;
-}): Promise<Array<{ id: string; type: string; content: string; confidence: number; source: string }>> {
-  return (await request<Array<{ id: string; type: string; content: string; confidence: number; source: string }>>('/memories/search', {
-    method: 'POST',
-    body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }),
-  })) || [];
-}
-
-export async function getCalendarEvents(input?: { userId?: string; from?: string; to?: string }): Promise<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>> {
-  const params = new URLSearchParams();
-  params.set('userId', input?.userId || OWNER_ID);
-  if (input?.from) params.set('from', input.from);
-  if (input?.to) params.set('to', input.to);
-  return (await request<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>>(`/calendar-events?${params.toString()}`, { method: 'GET' })) || [];
-}
+async function request<T>(path: string, options?: RequestInit): Promise<T | null> { try { const response = await fetch(`${API_BASE}${path}`, { headers: { 'Content-Type': 'application/json', 'x-owner-id': OWNER_ID, ...(options?.headers || {}) }, ...options }); if (!response.ok) { console.warn(`[Persistence API] ${response.status} ${path}`); return null; } const payload = await response.json(); return (payload?.data ?? payload) as T; } catch (error) { console.warn(`[Persistence API] request failed: ${path}`, error); return null; } }
+export function persistConversation(message: ChatMessage, sessionId: string, context?: { projectId?: string | null; taskId?: string | null; userId?: string }): Promise<{ id: string } | null> { return request<{ id: string }>('/conversations', { method: 'POST', body: JSON.stringify({ userId: context?.userId || OWNER_ID, sessionId, role: message.sender, agentId: message.sender === 'manager' ? 'manager' : null, content: message.text, projectId: context?.projectId ?? null, taskId: context?.taskId ?? null, createdAt: new Date().toISOString() }) }); }
+export function persistWorkRecord(input: { userId?: string; type: string; title: string; content: string; conversationId?: string | null; projectId?: string | null; taskId?: string | null; createdBy?: 'user' | 'system' }): Promise<{ id: string } | null> { return request<{ id: string }>('/work-records', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) }); }
+export function persistFocusSession(input: { userId?: string; taskId?: string | null; plannedMinutes: number; actualMinutes?: number; startedAt: string; endedAt?: string; completed: boolean; interruptionCount?: number }): Promise<{ id: string } | null> { return request<{ id: string }>('/focus-sessions', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) }); }
+export function persistMemory(input: { userId?: string; domain: 'global' | 'work' | 'study'; type: string; content: string; source?: 'owner' | 'observed' | 'inferred'; confidence?: number; projectId?: string | null; taskId?: string | null; evidenceCount?: number }): Promise<{ id: string } | null> { return request<{ id: string }>('/memories', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) }); }
+export async function getScopedMemories(input: { userId?: string; domain: 'global' | 'work' | 'study'; projectId?: string | null; taskId?: string | null; query?: string; limit?: number }): Promise<Array<{ id: string; type: string; content: string; confidence: number; source: string }>> { return (await request<Array<{ id: string; type: string; content: string; confidence: number; source: string }>>('/memories/search', { method: 'POST', body: JSON.stringify({ ...input, userId: input.userId || OWNER_ID }) })) || []; }
+export async function getCalendarEvents(input?: { userId?: string; from?: string; to?: string }): Promise<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>> { const params = new URLSearchParams(); params.set('userId', input?.userId || OWNER_ID); if (input?.from) params.set('from', input.from); if (input?.to) params.set('to', input.to); return (await request<Array<{ id: string; title: string; startAt: string; endAt: string; calendarId: string }>>(`/calendar-events?${params.toString()}`, { method: 'GET' })) || []; }
