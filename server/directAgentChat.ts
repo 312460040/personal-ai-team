@@ -1,6 +1,6 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { routeManagerRequest } from './agentTeam';
+import { buildTeamExecutionPlan, routeManagerRequest } from './agentTeam';
 
 const router = express.Router();
 const AGENTS: Record<string, { name: string; role: string; specialty: string }> = {
@@ -34,8 +34,6 @@ router.post('/chat', async (req, res) => {
   const prompt = String(message || '').trim();
   if (!prompt) return res.status(400).json({ error: 'Message cannot be empty' });
 
-  // Manager 是公開入口：當前端沒有指定專業 Agent 時，先做一次確定性的分流。
-  // mixed/general 仍由 Manager 自己處理；單一領域則交給對應專業 Agent。
   const requestedAgentId = String(agentId || 'manager');
   const routing = requestedAgentId === 'manager' ? routeManagerRequest(prompt) : {
     primaryAgent: requestedAgentId === 'work' || requestedAgentId === 'study' ? requestedAgentId : 'manager',
@@ -44,6 +42,7 @@ router.post('/chat', async (req, res) => {
     reason: 'Owner 已直接指定專業 Agent。',
     requiresDataWrite: /新增|建立|修改|更新|刪除|完成|取消|安排|排程|排定|加入|移除|標記|改成|調整/i.test(prompt),
   } as const;
+  const executionPlan = buildTeamExecutionPlan(routing);
   const effectiveAgentId = requestedAgentId === 'manager' ? routing.primaryAgent : requestedAgentId;
   const profile = agentProfile(effectiveAgentId, agentName, agentRole);
   const client = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { headers: { 'User-Agent': 'personal-ai-team' } } }) : null;
@@ -58,6 +57,7 @@ router.post('/chat', async (req, res) => {
   const allTasks = [...workTasks.map(t => ({ ...t, domain: 'work' })), ...studyTasks.map(t => ({ ...t, domain: 'study' }))];
 
   const routingLabel = routing.intent === 'work' ? '工作 → Work Agent' : routing.intent === 'study' ? '課業／研究 → Study Agent' : routing.intent === 'mixed' ? '工作＋課業 → Manager 協調 Work Agent + Study Agent' : '一般需求 → Manager Agent';
+  const executionLabel = executionPlan.steps.map((step, index) => `${index + 1}. ${step.agentId === 'manager' ? 'Manager Agent' : step.agentId === 'work' ? 'Work Agent' : 'Study Agent'}：${step.purpose}`).join('\n');
   const systemPrompt = `你是 Personal AI Team 的長期 AI 員工。你不是客服，也不是只會回覆固定模板的聊天機器人；你要像一位真的和 Owner 長期合作的同事。
 目前身份：${profile.name}（${profile.role}）。專長：${profile.specialty}。
 
@@ -67,11 +67,16 @@ router.post('/chat', async (req, res) => {
 - 是否可能需要資料寫入：${routing.requiresDataWrite ? '是' : '否'}
 - 已委派：${routing.delegatedAgents.join(', ') || '無'}
 
+【本輪 Team Execution Plan】
+${executionLabel}
+${executionPlan.managerFinalStep}
+
 【團隊協作規則】
 - Manager 是唯一總管。當需求明確屬於單一專業領域時，由該專業 Agent 執行；不要讓 Manager 與專業 Agent 重複做同一件事。
 - 工作需求由 Work Agent 處理；課業／研究需求由 Study Agent 處理；同時涉及兩者時由 Manager 協調兩邊。
 - 如果是一般聊天、討論或無法安全分類的需求，由 Manager 自己處理。
 - 不要因為訊息出現「報告」就一律判成工作；要依上下文判斷。這一輪的分流結果已由系統提供，請尊重它。
+- 專業 Agent 完成後，結果必須回到 Manager 的最終回覆；不要把內部執行細節當成 Owner 必須理解的技術資訊。
 
 【自然對話】
 - 用自然、口語、成熟的繁體中文回應，像真的人在一起工作。
@@ -137,7 +142,7 @@ ${JSON.stringify(safeHistory, null, 2)}
       const id = String(a?.taskId || '');
       return validIds.has(id) && (!selectedTaskIds.length || selectedSet.has(id));
     }).map((a: any) => ({ taskId: String(a.taskId), domain: a.domain === 'study' ? 'study' : 'work', updates: sanitizeUpdates(a.updates) })).filter((a: any) => Object.keys(a.updates).length > 0) : [];
-    return res.json({ sender: 'agent', agentId: effectiveAgentId, requestedAgentId, agentName: profile.name, agentRole: profile.role, text: String(result.reply || '我有收到。你可以繼續說。'), actions, routing: { ...routing, effectiveAgentId } });
+    return res.json({ sender: 'agent', agentId: effectiveAgentId, requestedAgentId, agentName: profile.name, agentRole: profile.role, text: String(result.reply || '我有收到。你可以繼續說。'), actions, routing: { ...routing, effectiveAgentId }, executionPlan });
   } catch (error) {
     console.error('Direct agent chat error:', error);
     return res.status(500).json({ error: 'Direct agent chat failed' });
