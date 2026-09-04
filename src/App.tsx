@@ -13,6 +13,7 @@ import { TodayView } from './components/TodayView';
 import { AgentRegistryModal } from './components/AgentRegistryModal';
 import DatabaseView from './components/DatabaseView';
 import DatabaseSync from './components/DatabaseSync';
+import OrganizationView from './components/OrganizationView';
 import IdeaBoard from './components/IdeaBoard';
 import { AGENT_REGISTRY } from './data/agentRegistry';
 import { AppDataProvider, useAppData } from './context/AppDataContext';
@@ -24,7 +25,7 @@ import { apiUrl } from './services/apiBase';
 
 type ChatSendContext = { workspaceId: string; projectId: string | null; chatRoomId: string; chatRoomName: string; chatCategoryId: string };
 const NOTIFICATION_KEY = 'ait_notifications_v1'; const TASK_BATCH_KEY = 'ait_manager_task_batches_v1';
-type ActiveTab = 'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents' | 'database' | 'ideas';
+type ActiveTab = 'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents' | 'database' | 'ideas' | 'organization';
 function AppMainContent() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home'); const [isAgentsModalOpen, setIsAgentsModalOpen] = useState(false); const [isManagerStatusOpen, setIsManagerStatusOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>(() => { try { return JSON.parse(localStorage.getItem(NOTIFICATION_KEY) || '[]'); } catch { return []; } });
@@ -47,6 +48,7 @@ function AppMainContent() {
     <NavigationShell activeTab={activeTab} onTabChange={tab => tab === 'agents' ? setIsAgentsModalOpen(true) : setActiveTab(tab)} onLoadDemoData={() => { if (window.confirm('確定要載入 Demo 範例資料嗎？（這將重設為示範任務資料庫）')) loadDemoData(); }} onClearDemoData={() => { if (window.confirm('確定要清除所有示範資料嗎？（這將完整保留你的真實資料）')) clearDemoData(); }} onClearAllData={() => { if (window.confirm('確定要清空共享資料庫以測試「查無資料」真實防捏造模式嗎？')) clearAllData(); }} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workTasksCount={workPendingCount} studyTasksCount={studyPendingCount} onOpenAgentsModal={() => setIsAgentsModalOpen(true)} onOpenManagerStatus={() => setIsManagerStatusOpen(true)} notifications={notifications} onReadNotifications={markNotificationRead} onReadAllNotifications={markAllNotificationsRead} />
     <main className="flex-1 w-full pb-10">
       {activeTab === 'home' && <div className="mx-auto max-w-7xl px-2 sm:px-4 pt-6 space-y-6"><OwnerDashboard /><CalendarView /><ManagerSupervision /><ManagerNextAction /></div>}
+      {activeTab === 'organization' && <OrganizationView />}
       {activeTab === 'chat' && <ChatWorkspace messages={messages} onSendMessage={handleChatSend} isLoading={isLoading} onApplyScheduleToToday={confirmAndApplySchedule} currentActiveAgents={currentActiveAgents} agentRegistry={AGENT_REGISTRY} workTasks={workTasks} studyTasks={studyTasks} workProjects={workProjects} studySubjects={studySubjects} onToggleWorkTask={toggleWorkTask} onToggleStudyTask={toggleStudyTask} onUpdateWorkTask={updateWorkTask} onUpdateStudyTask={updateStudyTask} />}
       {activeTab === 'activity' && <AgentActivityView activityLogs={activityLogs} onTriggerDemoFlow={() => { setActiveTab('chat'); sendMessage('幫我檢查目前有哪些工作需要優先處理？'); }} isLoading={isLoading} />}
       {activeTab === 'work' && <WorkView projects={workProjects} tasks={workTasks} onToggleTask={toggleWorkTask} onAddTask={addWorkTask} onUpdateTask={updateWorkTask} onDeleteTask={deleteWorkTask} onAddProject={addWorkProject} onUpdateProject={updateWorkProject} onDeleteProject={deleteWorkProject} onAskAgentAboutWork={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
