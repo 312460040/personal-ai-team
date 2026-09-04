@@ -3,6 +3,7 @@ import persistenceRouter from './server/persistence';
 import calendarRouter from './server/calendar';
 import directAgentRouter from './server/directAgentChat';
 import scheduleExecutionRouter from './server/scheduleExecution';
+import { routeManagerRequest } from './server/agentTeam';
 import { buildPublicRoutingInstruction, classifyPublicRequest } from './server/publicIntake';
 import { buildGlobalTaskReview } from './server/globalTaskReview';
 import { buildDailyReview, buildTomorrowPlan } from './server/dailyReview';
@@ -34,6 +35,11 @@ express.application.use = function patchedUse(...args: any[]) {
     originalUse.call(this, '/api/calendar', calendarRouter);
     originalUse.call(this, '/api/agent/direct', directAgentRouter);
     originalUse.call(this, '/api/agent/execute-schedule', scheduleExecutionRouter);
+    originalUse.call(this, '/api/agent/team', express.Router().post('/route', (req: any, res: any) => {
+      const message = String(req.body?.message || '').trim();
+      if (!message) return res.status(400).json({ error: 'Message cannot be empty' });
+      return res.json(routeManagerRequest(message));
+    }));
   }
   return originalUse.apply(this, args as any);
 };
@@ -104,16 +110,9 @@ express.application.post = function patchedPost(path: any, ...handlers: any[]) {
         };
         if (result.category === 'global') {
           const report = result.mode === 'daily_review' ? buildDailyReview(context) : result.mode === 'tomorrow_plan' ? buildTomorrowPlan(context) : buildGlobalTaskReview(context);
-          const modeLabel = result.mode === 'daily_review' ? '每日覆盤' : result.mode === 'tomorrow_plan' ? '隔日規劃' : '全域任務唯讀盤點';
           const executableSchedule = isScheduleExecutionRequest(message) && result.mode === 'tomorrow_plan' ? true : isScheduleExecutionRequest(message);
           if (executableSchedule) {
-            return res.json({
-              intentType: 'HYBRID', delegatedAgents: ['work', 'study'],
-              activityLogs: [{ id: `act-schedule-${Date.now()}`, timestamp: new Date().toISOString(), stepIndex: 1, fromAgent: 'manager', action: 'Manager 執行時間規劃', summary: '讀取 User Tasks → 依優先級／Deadline／工時建立可執行排程', detail: '這不是建議清單；排程會直接寫入 Today 工作區。', status: 'completed', durationMs: 0 }],
-              workOutput: report, studyOutput: '', finalSynthesisMarkdown: `### ✅ Manager 已執行時間規劃\n\n我會直接替你安排，不再要求你手動「套用」。\n\n${report}`,
-              proposedTimeBlocks: [], createdTaskPayload: null, durationTotalMs: 0, publicIntake: req.body.context.publicIntake,
-              executeSchedule: true
-            });
+            return res.json({ intentType: 'HYBRID', delegatedAgents: ['work', 'study'], activityLogs: [{ id: `act-schedule-${Date.now()}`, timestamp: new Date().toISOString(), stepIndex: 1, fromAgent: 'manager', action: 'Manager 執行時間規劃', summary: '讀取 User Tasks → 依優先級／Deadline／工時建立可執行排程', detail: '這不是建議清單；排程會直接寫入 Today 工作區。', status: 'completed', durationMs: 0 }], workOutput: report, studyOutput: '', finalSynthesisMarkdown: `### ✅ Manager 已執行時間規劃\n\n我會直接替你安排，不再要求你手動「套用」。\n\n${report}`, proposedTimeBlocks: [], createdTaskPayload: null, durationTotalMs: 0, publicIntake: req.body.context.publicIntake, executeSchedule: true });
           }
           return res.json({ intentType: result.mode === 'daily_review' ? 'DAILY_REVIEW' : result.mode === 'tomorrow_plan' ? 'TOMORROW_PLAN' : 'GLOBAL_TASK_REVIEW', delegatedAgents: ['work', 'study'], activityLogs: [{ id: `act-manager-${Date.now()}`, timestamp: new Date().toISOString(), stepIndex: 1, fromAgent: 'manager', action: modeLabel, summary: '跨工作與課業整理 User Tasks', detail: 'Manager-level 唯讀分析。', status: 'completed', durationMs: 0 }], workOutput: report, studyOutput: '', finalSynthesisMarkdown: report, proposedTimeBlocks: [], createdTaskPayload: null, durationTotalMs: 0, publicIntake: req.body.context.publicIntake });
         }
