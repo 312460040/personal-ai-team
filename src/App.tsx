@@ -12,6 +12,7 @@ import { StudyView } from './components/StudyView';
 import { TodayView } from './components/TodayView';
 import { AgentRegistryModal } from './components/AgentRegistryModal';
 import DatabaseView from './components/DatabaseView';
+import IdeaBoard from './components/IdeaBoard';
 import { AGENT_REGISTRY } from './data/agentRegistry';
 import { AppDataProvider, useAppData } from './context/AppDataContext';
 import { analyzeManagerState } from './engines/managerEngine';
@@ -22,7 +23,7 @@ import { apiUrl } from './services/apiBase';
 
 type ChatSendContext = { workspaceId: string; projectId: string | null; chatRoomId: string; chatRoomName: string; chatCategoryId: string };
 const NOTIFICATION_KEY = 'ait_notifications_v1'; const TASK_BATCH_KEY = 'ait_manager_task_batches_v1';
-type ActiveTab = 'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents' | 'database';
+type ActiveTab = 'home' | 'chat' | 'activity' | 'work' | 'study' | 'today' | 'agents' | 'database' | 'ideas';
 function AppMainContent() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home'); const [isAgentsModalOpen, setIsAgentsModalOpen] = useState(false); const [isManagerStatusOpen, setIsManagerStatusOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>(() => { try { return JSON.parse(localStorage.getItem(NOTIFICATION_KEY) || '[]'); } catch { return []; } });
@@ -50,6 +51,7 @@ function AppMainContent() {
       {activeTab === 'work' && <WorkView projects={workProjects} tasks={workTasks} onToggleTask={toggleWorkTask} onAddTask={addWorkTask} onUpdateTask={updateWorkTask} onDeleteTask={deleteWorkTask} onAddProject={addWorkProject} onUpdateProject={updateWorkProject} onDeleteProject={deleteWorkProject} onAskAgentAboutWork={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
       {activeTab === 'study' && <StudyView subjects={studySubjects} tasks={studyTasks} onToggleTask={toggleStudyTask} onAddTask={addStudyTask} onUpdateTask={updateStudyTask} onDeleteTask={deleteStudyTask} onAddSubject={addStudySubject} onUpdateSubject={updateStudySubject} onDeleteSubject={deleteStudySubject} onAskAgentAboutStudy={handleAskAgentFromTab} onClearDemoData={clearDemoData} />}
       {activeTab === 'today' && <TodayView blocks={todayBlocks} onToggleBlock={data.toggleTodayBlock} onAddBlock={data.addTodayBlock} onAskManagerToReschedule={() => { setActiveTab('chat'); sendMessage('檢視我今天現有的工作與課業時間塊，幫我重新規劃最佳化時間分配。'); }} />}
+      {activeTab === 'ideas' && <div className="mx-auto max-w-7xl px-2 sm:px-4 py-3 h-[calc(100vh-5rem)]"><IdeaBoard /></div>}
       {activeTab === 'database' && <DatabaseView />}
     </main>
     <AgentRegistryModal isOpen={isAgentsModalOpen} onClose={() => setIsAgentsModalOpen(false)} /><ManagerStatusDrawer isOpen={isManagerStatusOpen} onClose={() => setIsManagerStatusOpen(false)} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workPendingCount={workPendingCount} studyPendingCount={studyPendingCount} />
