@@ -9,13 +9,13 @@ type ChatRoom = { id: string; categoryId: string; name: string; description?: st
 type CustomAgent = { id: string; name: string; roleName: string; categoryId: string; tagline: string };
 type ChatContext = { workspaceId: string; projectId: string | null; chatRoomId: string; chatRoomName: string; chatCategoryId: string };
 const ROOM_KEY = 'ait_chat_rooms_v3'; const CUSTOM_AGENT_KEY = 'ait_custom_agents_v1'; const PUBLIC_ROOM_ID = 'room-public';
-const roomMessagesKey = (roomId: string) => `ait_chat_messages_v3_${roomId}`;
+const roomMessagesKey = (roomId:string) => `ait_chat_messages_v3_${roomId}`;
 const defaultCategories: ChatCategory[] = [{ id:'work',name:'工作',icon:'💼',description:'工作安排、專案與執行' },{ id:'study',name:'課業',icon:'🎓',description:'課業、研究與學習進度' },{ id:'personal',name:'個人規劃',icon:'🧭',description:'生活安排、目標與個人規劃' }];
 const defaultRooms: ChatRoom[] = [{ id:'room-work-general',categoryId:'work',name:'工作總管',description:'工作安排、優先級與進度',agentIds:['manager','work'] },{ id:'room-study-general',categoryId:'study',name:'課業規劃',description:'課業、複習與學習進度',agentIds:['manager','study'] },{ id:'room-study-research',categoryId:'study',name:'研究討論',description:'論文、文獻與研究問題',agentIds:['manager','study'] },{ id:'room-personal-general',categoryId:'personal',name:'個人規劃',description:'生活安排、目標與待辦事項',agentIds:['manager']}];
 const publicRoom: ChatRoom = { id:PUBLIC_ROOM_ID,categoryId:'public',name:'公共區',description:'所有零散任務、想法與需求的入口，由 Manager 自動判斷並分流',agentIds:['manager'] };
 const readList=<T,>(key:string,fallback:T[]):T[]=>{try{const saved=localStorage.getItem(key);return saved?JSON.parse(saved):fallback;}catch{return fallback;}};
 const readMessages=(roomId:string,fallback:ChatMessage[]):ChatMessage[]=>{try{const saved=localStorage.getItem(roomMessagesKey(roomId));return saved?JSON.parse(saved):fallback;}catch{return fallback;}};
-interface Props { messages:ChatMessage[]; onSendMessage:(text:string,context?:ChatContext)=>void; isLoading:boolean; onApplyScheduleToToday:(blocks:StructuredTimeBlock[])=>void; currentActiveAgents:string[]; agentRegistry:AgentInfo[]; workTasks:WorkTask[]; studyTasks:StudyTask[]; workProjects?:WorkProject[]; studySubjects?:StudySubject[]; onToggleWorkTask:(id:string)=>void; onToggleStudyTask:(id:string)=>void; onUpdateWorkTask:(task:WorkTask)=>void; onUpdateStudyTask:(task:StudyTask)=>void; }
+interface Props { messages:ChatMessage[]; onSendMessage:(text:string,context?:ChatContext)=>void; isLoading:boolean; onApplyScheduleToToday:(blocks:StructuredTimeBlock[])=>void; currentActiveAgents:string[]; agentRegistry:AgentInfo[]; workTasks:WorkTask[]; studyTasks:StudyTask[]; workProjects?:WorkProject[]; studySubjects?:StudySubject[]; onToggleWorkTask:(id:string)=>void; onToggleStudyTask:(id:string)=>void; onUpdateWorkTask:(task:WorkTask)=>void; onUpdateStudyTask:(task:StudyTask)=>void; onAddWorkTask:(task:any)=>void; onAddStudyTask:(task:any)=>void; }
 const REVIEW_PATTERN=/每日覆盤|今日覆盤|今天覆盤|我要複盤|我要覆盤|幫我複盤|回顧今天|今日回顧|每天覆盤|日終覆盤/i;
 const TOMORROW_PATTERN=/隔日規劃|明日規劃|明天規劃|明日安排|明天安排/i;
 export const ChatWorkspace:React.FC<Props>=(props)=>{
