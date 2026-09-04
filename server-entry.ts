@@ -1,6 +1,7 @@
 import express from 'express';
 import persistenceRouter from './server/persistence';
 import calendarRouter from './server/calendar';
+import directAgentRouter from './server/directAgentChat';
 import { buildPublicRoutingInstruction, classifyPublicRequest } from './server/publicIntake';
 import { buildGlobalTaskReview } from './server/globalTaskReview';
 import { buildDailyReview, buildTomorrowPlan } from './server/dailyReview';
@@ -8,7 +9,7 @@ import { extractMentalTasks, formatMentalTaskSummary } from './server/mentalTask
 
 const originalUse=express.application.use;let useCount=0;let mounted=false;let corsMounted=false;
 const DOMAIN_LABELS:Record<string,string>={work:'工作',study:'課業／研究',personal:'個人規劃',global:'全域任務管理'};
-express.application.use=function patchedUse(...args:any[]){useCount+=1;if(!corsMounted){corsMounted=true;originalUse.call(this,(req:any,res:any,next:any)=>{const origin=req.headers.origin as string|undefined;const allowedOrigins=new Set(['https://312460040.github.io','http://localhost:5173','http://127.0.0.1:5173',process.env.FRONTEND_ORIGIN].filter(Boolean) as string[]);if(origin&&allowedOrigins.has(origin)){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}res.setHeader('Access-Control-Allow-Methods','GET,POST,PUT,PATCH,DELETE,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type, X-Owner-Id, X-Owner-Confirmed, Authorization');if(req.method==='OPTIONS')return res.status(204).end();next();});}if(!mounted&&useCount>=2){mounted=true;originalUse.call(this,'/api/persistence',persistenceRouter);originalUse.call(this,'/api/calendar',calendarRouter);}return originalUse.apply(this,args as any);};
+express.application.use=function patchedUse(...args:any[]){useCount+=1;if(!corsMounted){corsMounted=true;originalUse.call(this,(req:any,res:any,next:any)=>{const origin=req.headers.origin as string|undefined;const allowedOrigins=new Set(['https://312460040.github.io','http://localhost:5173','http://127.0.0.1:5173',process.env.FRONTEND_ORIGIN].filter(Boolean) as string[]);if(origin&&allowedOrigins.has(origin)){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}res.setHeader('Access-Control-Allow-Methods','GET,POST,PUT,PATCH,DELETE,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type, X-Owner-Id, X-Owner-Confirmed, Authorization');if(req.method==='OPTIONS')return res.status(204).end();next();});}if(!mounted&&useCount>=2){mounted=true;originalUse.call(this,'/api/persistence',persistenceRouter);originalUse.call(this,'/api/calendar',calendarRouter);originalUse.call(this,'/api/agent/direct',directAgentRouter);}return originalUse.apply(this,args as any);};
 const originalPost=express.application.post;
 
 function isTaskArrangementRequest(message:string){
