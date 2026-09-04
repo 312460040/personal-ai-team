@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import organizationRouter from './organization';
 
 const router = Router();
 function configured(){return Boolean(process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY)}
@@ -7,7 +8,7 @@ async function ensureUser(ownerId:string){const rows=await supabase(`users?exter
 function ownerId(req:Request){return String(req.header('x-owner-id')||'personal-owner')}
 router.get('/health',(_req,res)=>res.json({configured:configured(),provider:configured()?'supabase-postgresql':'not-configured'}));
 router.use(async(req,res,next)=>{if(!configured())return res.status(503).json({error:'Persistence database is not configured'});try{const userId=await ensureUser(ownerId(req));if(!userId)return res.status(500).json({error:'Unable to resolve owner'});res.locals.userId=userId;next()}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
-const VIEWABLE_TABLES=['users','projects','tasks','conversations','work_records','memories','focus_sessions','calendar_events','diagnosis_records','adaptive_proposals','study_subjects','today_blocks'] as const;
+const VIEWABLE_TABLES=['users','projects','tasks','conversations','work_records','memories','focus_sessions','calendar_events','diagnosis_records','adaptive_proposals','study_subjects','today_blocks','agent_handoffs','agent_messages'] as const;
 type ViewableTable=typeof VIEWABLE_TABLES[number];
 function isViewableTable(value:string):value is ViewableTable{return(VIEWABLE_TABLES as readonly string[]).includes(value)}
 async function readTable(table:ViewableTable,userId:string,limit?:number){const bounded=Math.min(Math.max(limit||100,1),500);if(table==='users')return supabase(`users?id=eq.${encodeURIComponent(userId)}&select=id,external_id,display_name,created_at&limit=1`);return supabase(`${table}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc&limit=${bounded}`)}
@@ -26,4 +27,8 @@ router.post('/focus-sessions',async(req,res)=>{try{const body=req.body||{};const
 router.post('/memories',async(req,res)=>{try{const body=req.body||{};const rows=await supabase('memories',{method:'POST',body:JSON.stringify({user_id:res.locals.userId,domain:body.domain||'global',type:body.type||'semantic',content:body.content||'',source:body.source||'observed',confidence:body.confidence??0.5,project_id:body.projectId||null,task_id:body.taskId||null,evidence_count:Number(body.evidenceCount)||1})});res.json(rows||[])}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
 router.post('/memories/search',async(req,res)=>{try{const body=req.body||{};const domain=body.domain||'global';const project=body.projectId?`&project_id=eq.${encodeURIComponent(body.projectId)}`:'';const task=body.taskId?`&task_id=eq.${encodeURIComponent(body.taskId)}`:'';const text=String(body.query||'').trim();const textFilter=text?`&content=ilike.*${encodeURIComponent(text)}*`:'';const rows=await supabase(`memories?user_id=eq.${res.locals.userId}&domain=eq.${encodeURIComponent(domain)}${project}${task}${textFilter}&select=id,type,content,confidence,source,project_id,task_id,evidence_count,updated_at&order=updated_at.desc&limit=${Math.min(Number(body.limit)||20,100)}`);res.json(rows||[])}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
 router.get('/calendar-events',async(req,res)=>{try{const from=req.query.from?`&start_at=gte.${encodeURIComponent(String(req.query.from))}`:'';const to=req.query.to?`&end_at=lte.${encodeURIComponent(String(req.query.to))}`:'';const rows=await supabase(`calendar_events?user_id=eq.${res.locals.userId}${from}${to}&select=id,title,start_at,end_at,calendar_id,status,google_event_id&order=start_at.asc&limit=200`);res.json((rows||[]).map((r:any)=>({id:r.id,title:r.title,startAt:r.start_at,endAt:r.end_at,calendarId:r.calendar_id,status:r.status,googleEventId:r.google_event_id})))}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
+
+// The organization router shares the same authenticated owner context and exposes department/handoff/agent-message APIs.
+router.use('/organization', organizationRouter);
+
 export default router;
