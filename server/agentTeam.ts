@@ -1,22 +1,36 @@
 import express from 'express';
 
 export type AgentId = 'manager' | 'work' | 'study';
+export type AgentIntent = 'work' | 'study' | 'mixed' | 'general';
 
-type RouteResult = {
+export type RouteResult = {
   primaryAgent: AgentId;
   delegatedAgents: AgentId[];
-  intent: 'work' | 'study' | 'mixed' | 'general';
+  intent: AgentIntent;
   reason: string;
   requiresDataWrite: boolean;
+};
+
+export type AgentExecutionStep = {
+  agentId: AgentId;
+  role: 'manager' | 'specialist';
+  purpose: string;
+  status: 'queued' | 'running' | 'completed' | 'blocked';
+};
+
+export type TeamExecutionPlan = {
+  route: RouteResult;
+  steps: AgentExecutionStep[];
+  managerFinalStep: string;
 };
 
 const router = express.Router();
 
 const WORK_PATTERNS = [
-  /工作|任務|待辦|專案|客戶|行銷|報告|主管|職場|上班|截止|deadline/i,
+  /工作|任務|待辦|專案|客戶|行銷|主管|職場|上班|截止|deadline/i,
 ];
 const STUDY_PATTERNS = [
-  /課業|作業|考試|讀書|學習|研究|論文|教授|課程|複習|lab|報告/i,
+  /課業|作業|考試|讀書|學習|研究|論文|教授|課程|複習|lab/i,
 ];
 const WRITE_PATTERNS = [
   /新增|建立|修改|更新|刪除|完成|取消|安排|排程|排定|加入|移除|標記|改成|調整/i,
@@ -71,24 +85,51 @@ export function routeManagerRequest(message: string): RouteResult {
   };
 }
 
+export function buildTeamExecutionPlan(route: RouteResult): TeamExecutionPlan {
+  const steps: AgentExecutionStep[] = [
+    {
+      agentId: 'manager',
+      role: 'manager',
+      purpose: '分析 Owner 需求、判斷是否需要專業 Agent 協作。',
+      status: 'completed',
+    },
+  ];
+
+  route.delegatedAgents.forEach((agentId) => {
+    steps.push({
+      agentId,
+      role: 'specialist',
+      purpose: agentId === 'work' ? '讀取工作 User Data，處理工作專案與任務。' : '讀取課業／研究 User Data，處理學習與研究需求。',
+      status: 'queued',
+    });
+  });
+
+  steps.push({
+    agentId: 'manager',
+    role: 'manager',
+    purpose: route.delegatedAgents.length ? '接收專業 Agent 結果、驗證實際資料狀態並形成最終回覆。' : '直接完成一般需求並回覆 Owner。',
+    status: 'queued',
+  });
+
+  return {
+    route,
+    steps,
+    managerFinalStep: route.requiresDataWrite
+      ? '只有確認資料實際寫入成功後，Manager 才能向 Owner 宣稱已完成。'
+      : '本次以唯讀分析或自然對話為主，不得宣稱已修改資料。',
+  };
+}
+
 router.post('/route', (req, res) => {
   const message = String(req.body?.message || '').trim();
   if (!message) return res.status(400).json({ error: 'Message cannot be empty' });
 
   const route = routeManagerRequest(message);
+  const executionPlan = buildTeamExecutionPlan(route);
+
   return res.json({
-    manager: {
-      id: 'manager',
-      name: 'Manager Agent',
-      role: 'AI 總管',
-    },
-    route,
-    plan: [
-      'Manager 接收需求',
-      ...route.delegatedAgents.map((agent) => `${agent === 'work' ? 'Work Agent' : 'Study Agent'} 讀取對應 User Data 並執行`),
-      route.delegatedAgents.length ? 'Manager 整合 Agent 結果' : 'Manager 直接處理一般需求',
-      route.requiresDataWrite ? '確認實際寫入資料後再回報 Owner' : '唯讀分析／自然對話，不宣稱已修改資料',
-    ],
+    manager: { id: 'manager', name: 'Manager Agent', role: 'AI 總管' },
+    ...executionPlan,
   });
 });
 
