@@ -13,6 +13,7 @@ import { TodayView } from './components/TodayView';
 import { AgentRegistryModal } from './components/AgentRegistryModal';
 import DatabaseView from './components/DatabaseView';
 import DatabaseSync from './components/DatabaseSync';
+import AgentHandoffSync from './components/AgentHandoffSync';
 import OrganizationView from './components/OrganizationView';
 import IdeaBoard from './components/IdeaBoard';
 import { AGENT_REGISTRY } from './data/agentRegistry';
@@ -60,4 +61,4 @@ function AppMainContent() {
     <AgentRegistryModal isOpen={isAgentsModalOpen} onClose={() => setIsAgentsModalOpen(false)} /><ManagerStatusDrawer isOpen={isManagerStatusOpen} onClose={() => setIsManagerStatusOpen(false)} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workPendingCount={workPendingCount} studyPendingCount={studyPendingCount} />
   </div>;
 }
-export default function App() { return <AppDataProvider><DatabaseSync /><AppMainContent /></AppDataProvider>; }
+export default function App() { return <AppDataProvider><DatabaseSync /><AgentHandoffSync /><AppMainContent /></AppDataProvider>; }
