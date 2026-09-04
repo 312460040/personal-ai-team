@@ -109,6 +109,20 @@ create table if not exists focus_sessions (
 );
 create index if not exists idx_focus_user_started on focus_sessions(user_id, started_at desc);
 
+create table if not exists calendar_connections (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null unique references users(id) on delete cascade,
+  provider text not null default 'google',
+  google_email text,
+  calendar_id text not null default 'primary',
+  access_token text,
+  refresh_token text,
+  expires_at timestamptz,
+  scopes jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists calendar_events (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
