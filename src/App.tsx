@@ -12,6 +12,7 @@ import { StudyView } from './components/StudyView';
 import { TodayView } from './components/TodayView';
 import { AgentRegistryModal } from './components/AgentRegistryModal';
 import DatabaseView from './components/DatabaseView';
+import DatabaseSync from './components/DatabaseSync';
 import IdeaBoard from './components/IdeaBoard';
 import { AGENT_REGISTRY } from './data/agentRegistry';
 import { AppDataProvider, useAppData } from './context/AppDataContext';
@@ -32,7 +33,7 @@ function AppMainContent() {
   const processedTaskBatchIds = useRef<Set<string>>(new Set());
   const handleAskAgentFromTab = (prompt: string) => { setActiveTab('chat'); sendMessage(prompt); };
   const isScheduleCommand = (text: string) => /(?:幫我|請幫我|請|麻煩)?(?:安排|排定|規劃|排程|分配).{0,60}(?:今天|明天|明日|時間|行程|工作|課業|事情|時段)/i.test(text) || /(?:今天|明天|明日).{0,30}(?:怎麼排|幫我排|安排一下|排程|時間規劃)/i.test(text);
-  const executeSchedule = async (text: string) => { try { const response = await fetch(apiUrl('/api/agent/execute-schedule'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Confirmed': 'true' }, body: JSON.stringify({ message: text, context: { workProjects, workTasks, studySubjects, studyTasks, currentContext: data.currentContext } }) }); if (!response.ok) throw new Error(`schedule execution returned ${response.status}`); const result = await response.json(); if (result.executed && Array.isArray(result.blocks) && result.blocks.length) { applyScheduleToToday(result.blocks as StructuredTimeBlock[]); setActiveTab('today'); } } catch (error) { console.error('Manager schedule execution failed:', error); } };
+  const executeSchedule = async (text: string) => { try { const response = await fetch(apiUrl('/api/agent/execute-schedule'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Confirmed': 'true', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ message: text, context: { workProjects, workTasks, studySubjects, studyTasks, currentContext: data.currentContext } }) }); if (!response.ok) throw new Error(`schedule execution returned ${response.status}`); const result = await response.json(); if (result.executed && Array.isArray(result.blocks) && result.blocks.length) { applyScheduleToToday(result.blocks as StructuredTimeBlock[]); setActiveTab('today'); } } catch (error) { console.error('Manager schedule execution failed:', error); } };
   const handleChatSend = async (text: string, context?: ChatSendContext) => { if (context) setCurrentContext({ workspaceId: context.workspaceId, projectId: context.projectId }); if (isScheduleCommand(text)) { await Promise.all([sendMessage(text), executeSchedule(text)]); return; } await sendMessage(text); };
   const currentActiveAgents = ['manager', 'work', 'study']; const workPendingCount = workTasks.filter(t => t.status !== 'completed').length; const studyPendingCount = studyTasks.filter(t => t.status !== 'completed').length;
   const managerAnalysis = useMemo(() => analyzeManagerState({ workTasks, studyTasks, todayBlocks }), [workTasks, studyTasks, todayBlocks]);
@@ -57,4 +58,4 @@ function AppMainContent() {
     <AgentRegistryModal isOpen={isAgentsModalOpen} onClose={() => setIsAgentsModalOpen(false)} /><ManagerStatusDrawer isOpen={isManagerStatusOpen} onClose={() => setIsManagerStatusOpen(false)} activeAgentsCount={3} totalAgentsCount={AGENT_REGISTRY.length} workPendingCount={workPendingCount} studyPendingCount={studyPendingCount} />
   </div>;
 }
-export default function App() { return <AppDataProvider><AppMainContent /></AppDataProvider>; }
+export default function App() { return <AppDataProvider><DatabaseSync /><AppMainContent /></AppDataProvider>; }
