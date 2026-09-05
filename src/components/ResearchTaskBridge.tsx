@@ -31,7 +31,7 @@ type StudyTaskLike = {
   createdBy?: 'user' | 'system';
 };
 
-const PROCESSED_KEY = 'ait_research_task_bridge_processed_v4';
+const PROCESSED_KEY = 'ait_research_task_bridge_processed_v5';
 const STUDY_SUBJECTS_KEY = 'ait_study_subjects_v2';
 const STUDY_TASKS_KEY = 'ait_study_tasks_v2';
 const MESSAGES_KEY = 'ait_messages_v2';
@@ -110,45 +110,80 @@ function parseSingleCreatedTask(text: string, subject: StudySubjectLike | null):
   return normalizeStudyTask({ id, title, priority: priorityRaw || 'medium', estimatedHours: hoursRaw ? Number(hoursRaw) : 1, deadline, subjectId: subject?.id, subjectName: subject?.name, notes: '由 Manager Agent 建立的研究任務。' }, subject);
 }
 
-function consumeManagerStudyData() {
-  let messages: any[] = [];
-  let subjects: StudySubjectLike[] = [];
-  let tasks: StudyTaskLike[] = [];
+function readStore<T>(key: string): T[] | null {
   try {
-    messages = JSON.parse(localStorage.getItem(MESSAGES_KEY) || '[]');
-    subjects = JSON.parse(localStorage.getItem(STUDY_SUBJECTS_KEY) || '[]');
-    tasks = JSON.parse(localStorage.getItem(STUDY_TASKS_KEY) || '[]');
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value : null;
   } catch {
-    return false;
+    return null;
   }
-  if (!Array.isArray(messages) || !Array.isArray(subjects) || !Array.isArray(tasks)) return false;
+}
 
-  const processed = new Set<string>(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
-  const subjectNames = new Set(subjects.map((s: any) => String(s?.name || '').trim()));
-  const taskIds = new Set(tasks.map((t: any) => String(t?.id)));
+function persistAndVerify(newSubjects: StudySubjectLike[], subjects: StudySubjectLike[], newTasks: StudyTaskLike[], tasks: StudyTaskLike[]) {
+  const nextSubjects = [...newSubjects, ...subjects];
+  const nextTasks = [...newTasks, ...tasks];
+  localStorage.setItem(STUDY_SUBJECTS_KEY, JSON.stringify(nextSubjects));
+  localStorage.setItem(STUDY_TASKS_KEY, JSON.stringify(nextTasks));
+
+  const verifiedSubjects = readStore<StudySubjectLike>(STUDY_SUBJECTS_KEY) || [];
+  const verifiedTasks = readStore<StudyTaskLike>(STUDY_TASKS_KEY) || [];
+  const subjectIds = new Set(verifiedSubjects.map((item) => String(item.id)));
+  const taskIds = new Set(verifiedTasks.map((item) => String(item.id)));
+  const subjectsVerified = newSubjects.every((item) => subjectIds.has(String(item.id)));
+  const tasksVerified = newTasks.every((item) => taskIds.has(String(item.id)));
+  return subjectsVerified && tasksVerified;
+}
+
+function consumeManagerStudyData() {
+  const messages = readStore<any>(MESSAGES_KEY);
+  const subjects = readStore<StudySubjectLike>(STUDY_SUBJECTS_KEY);
+  const tasks = readStore<StudyTaskLike>(STUDY_TASKS_KEY);
+  if (!messages || !subjects || !tasks) return false;
+
+  const processed = new Set<string>(readStore<string>(PROCESSED_KEY) || []);
+  const subjectNames = new Set(subjects.map((s) => String(s?.name || '').trim()));
+  const taskIds = new Set(tasks.map((t) => String(t?.id)));
   const newSubjects: StudySubjectLike[] = [];
   const newTasks: StudyTaskLike[] = [];
 
   for (const message of messages) {
     if (message?.sender !== 'manager' || typeof message?.text !== 'string') continue;
     const text = message.text;
+
     const batch = text.match(/<!--AIT_TASK_BATCH:([\s\S]*?)-->/);
     if (batch) {
       const key = `${message.id}:${batch[1]}`;
-      if (!processed.has(key)) {
-        try {
-          const parsed = JSON.parse(batch[1]);
-          for (const raw of Array.isArray(parsed?.study) ? parsed.study : []) {
-            const task = normalizeStudyTask(raw, newSubjects[0] || null);
-            if (task && !taskIds.has(task.id)) { newTasks.push(task); taskIds.add(task.id); }
+      if (processed.has(key)) continue;
+      try {
+        const parsed = JSON.parse(batch[1]);
+        for (const raw of Array.isArray(parsed?.study) ? parsed.study : []) {
+          let fallbackSubject: StudySubjectLike | null = null;
+          const subjectName = String(raw?.subjectName || '').trim();
+          if (subjectName) {
+            fallbackSubject = normalizeSubject({ name: subjectName });
+            if (fallbackSubject && !subjectNames.has(subjectName)) {
+              newSubjects.push(fallbackSubject);
+              subjectNames.add(subjectName);
+            } else {
+              fallbackSubject = subjects.find((s) => String(s.name).trim() === subjectName) || fallbackSubject;
+            }
           }
-        } catch { /* keep normal app state intact */ }
-        processed.add(key);
+          const task = normalizeStudyTask(raw, fallbackSubject);
+          if (task && !taskIds.has(task.id)) { newTasks.push(task); taskIds.add(task.id); }
+        }
+      } catch {
+        // Leave the original message untouched when its batch is malformed.
+        continue;
       }
-      continue;
+      if (persistAndVerify(newSubjects, subjects, newTasks, tasks)) {
+        processed.add(key);
+        localStorage.setItem(PROCESSED_KEY, JSON.stringify([...processed].slice(-300)));
+        return true;
+      }
+      return false;
     }
 
-    const key = `${message.id}:manager-study-v4`;
+    const key = `${message.id}:manager-study-v5`;
     if (processed.has(key)) continue;
 
     const subject = parseSubject(text);
@@ -168,18 +203,21 @@ function consumeManagerStudyData() {
     const single = parseSingleCreatedTask(text, effectiveSubject);
     if (single && !taskIds.has(single.id)) { newTasks.push(single); taskIds.add(single.id); }
 
-    processed.add(key);
-  }
+    if (!newSubjects.length && !newTasks.length) {
+      processed.add(key);
+      continue;
+    }
 
-  if (!newSubjects.length && !newTasks.length) {
-    localStorage.setItem(PROCESSED_KEY, JSON.stringify([...processed].slice(-300)));
+    if (persistAndVerify(newSubjects, subjects, newTasks, tasks)) {
+      processed.add(key);
+      localStorage.setItem(PROCESSED_KEY, JSON.stringify([...processed].slice(-300)));
+      return true;
+    }
     return false;
   }
 
-  localStorage.setItem(STUDY_SUBJECTS_KEY, JSON.stringify([...newSubjects, ...subjects]));
-  localStorage.setItem(STUDY_TASKS_KEY, JSON.stringify([...newTasks, ...tasks]));
   localStorage.setItem(PROCESSED_KEY, JSON.stringify([...processed].slice(-300)));
-  return true;
+  return false;
 }
 
 export const ResearchTaskBridge: React.FC = () => {
