@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Send } from 'lucide-react';
 import type { Person } from '../types';
 
 type Props = { people: Person[]; value: string; onChange: (value: string) => void; placeholder?: string };
@@ -17,9 +18,10 @@ export default function EmployeeMentionInput({ people, value, onChange, placehol
     onChange(value.replace(/@[^\s]*$/, `@${person.name} `));
     setOpen(false);
   };
-  return <div className="relative">
-    <textarea value={value} onChange={e => { onChange(e.target.value); setOpen(/(?:^|\s)@[^\s]*$/.test(e.target.value)); }} onFocus={() => setOpen(/(?:^|\s)@[^\s]*$/.test(value))} placeholder={placeholder || '輸入訊息；使用 @員工 指派處理人員'} className="w-full rounded-xl border border-[#DDD8CE] bg-white px-3 py-2 text-sm outline-none" />
-    {open && matches.length > 0 && <div className="absolute z-20 bottom-full left-0 mb-1 w-full max-h-52 overflow-auto rounded-xl border border-[#E5E2DC] bg-white shadow-lg">{matches.map(p => <button key={p.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => select(p)} className="block w-full px-3 py-2 text-left text-sm hover:bg-[#F3F5F2]"><b>@{p.name}</b>{p.role ? <span className="ml-2 text-xs text-[#7A837D]">{p.role}</span> : null}</button>)}</div>}
-    {open && matches.length === 0 && /(?:^|\s)@[^\s]*$/.test(value) && <div className="absolute z-20 bottom-full left-0 mb-1 w-full rounded-xl border border-[#E5E2DC] bg-white p-3 text-xs text-[#8C938D] shadow-lg">找不到這個員工。請先在「人員」資料中建立，再使用 @ 指派。</div>}
+  return <div className="relative flex items-stretch gap-2">
+    <textarea value={value} onChange={e => { onChange(e.target.value); setOpen(/(?:^|\s)@[^\s]*$/.test(e.target.value)); }} onFocus={() => setOpen(/(?:^|\s)@[^\s]*$/.test(value))} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} placeholder={placeholder || '輸入訊息；使用 @員工 指派處理人員'} className="flex-1 min-h-[72px] rounded-xl border border-[#DDD8CE] bg-white px-3 py-2 text-sm outline-none resize-none" />
+    <button type="submit" disabled={!value.trim()} aria-label="送出訊息" title="送出訊息" className="self-end mb-0 shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#385244] px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#2F4639] disabled:cursor-not-allowed disabled:opacity-40"><Send className="w-4 h-4" /><span className="hidden sm:inline">送出</span></button>
+    {open && matches.length > 0 && <div className="absolute z-20 bottom-full left-0 mb-1 w-[calc(100%-5rem)] max-h-52 overflow-auto rounded-xl border border-[#E5E2DC] bg-white shadow-lg">{matches.map(p => <button key={p.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => select(p)} className="block w-full px-3 py-2 text-left text-sm hover:bg-[#F3F5F2]"><b>@{p.name}</b>{p.role ? <span className="ml-2 text-xs text-[#7A837D]">{p.role}</span> : null}</button>)}</div>}
+    {open && matches.length === 0 && /(?:^|\s)@[^\s]*$/.test(value) && <div className="absolute z-20 bottom-full left-0 mb-1 w-[calc(100%-5rem)] rounded-xl border border-[#E5E2DC] bg-white p-3 text-xs text-[#8C938D] shadow-lg">找不到這個員工。請先在「人員」資料中建立，再使用 @ 指派。</div>}
   </div>;
 }
