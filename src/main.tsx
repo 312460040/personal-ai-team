@@ -10,6 +10,71 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, ErrorBou
   render() { if (this.state.hasError) return <BootError title="Personal AI Team 啟動失敗" message={this.state.message} />; return this.props.children; }
 }
 function BootError({ title, message }: { title: string; message: string }) { return <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8F7F4', color: '#2D322E', fontFamily: 'system-ui, sans-serif' }}><div style={{ width: '100%', maxWidth: 760, border: '1px solid #E5E2DC', borderRadius: 18, background: '#FDFCFB', padding: 28, boxShadow: '0 12px 40px rgba(0,0,0,.08)' }}><h1 style={{ margin: '0 0 10px', fontSize: 22 }}>{title}</h1><p style={{ margin: 0, lineHeight: 1.7, color: '#68716A' }}>前端檔案已載入，但應用程式啟動時發生錯誤。請把下方錯誤畫面截圖給我，我可以直接定位。</p><pre style={{ marginTop: 18, padding: 16, borderRadius: 12, background: '#FAF0E6', color: '#7A4022', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, lineHeight: 1.6 }}>{message}</pre><button style={{ marginTop: 16, border: 0, borderRadius: 10, padding: '10px 16px', background: '#385244', color: '#fff', cursor: 'pointer' }} onClick={() => window.location.reload()}>重新載入</button></div></div>; }
+
+/**
+ * Demo data existed in an earlier prototype and can survive in browser localStorage.
+ * Clean it synchronously, before React/AppDataProvider is imported, so the provider
+ * cannot rehydrate the old demo records during its initial render.
+ */
+function removeLegacyDemoData() {
+  const keys = [
+    'ait_work_projects_v2',
+    'ait_work_tasks_v2',
+    'ait_study_subjects_v2',
+    'ait_study_tasks_v2',
+    'ait_today_blocks_v2',
+    'ait_people_v2',
+  ];
+
+  const isDemoRecord = (item: unknown): boolean => {
+    if (!item || typeof item !== 'object') return false;
+    const record = item as Record<string, unknown>;
+    const text = Object.values(record)
+      .filter((value) => typeof value === 'string')
+      .join(' ')
+      .toLowerCase();
+    return record.source === 'demo' ||
+      record.createdBy === 'system' && (
+        String(record.id ?? '').toLowerCase().includes('demo') ||
+        text.includes('【demo】') ||
+        text.includes('[demo]')
+      ) ||
+      String(record.id ?? '').toLowerCase().includes('demo') ||
+      text.includes('【demo】') ||
+      text.includes('[demo]');
+  };
+
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === null) continue;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) continue;
+      const cleaned = parsed.filter((item) => !isDemoRecord(item));
+      localStorage.setItem(key, JSON.stringify(cleaned));
+    } catch (error) {
+      console.warn(`Unable to clean legacy data: ${key}`, error);
+    }
+  }
+
+  // People had demo teammates in the original seed. Keep only the actual user record.
+  try {
+    const peopleRaw = localStorage.getItem('ait_people_v2');
+    if (peopleRaw) {
+      const people = JSON.parse(peopleRaw);
+      if (Array.isArray(people)) {
+        localStorage.setItem('ait_people_v2', JSON.stringify(
+          people.filter((person) => person?.source !== 'demo' && person?.createdBy !== 'system')
+        ));
+      }
+    }
+  } catch (error) {
+    console.warn('Unable to clean legacy people data', error);
+  }
+}
+
+removeLegacyDemoData();
+
 const rootElement = document.getElementById('root');
 if (!rootElement) throw new Error('Personal AI Team root element not found');
 const root = createRoot(rootElement);
