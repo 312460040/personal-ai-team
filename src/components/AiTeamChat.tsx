@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Send, Bot, User, Briefcase, GraduationCap, Copy, Check, ShieldCheck, AlertTriangle, PlusCircle } from 'lucide-react';
+import { Send, Bot, User, Briefcase, GraduationCap, Copy, Check, ShieldCheck, PlusCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { ChatMessage, AgentInfo, StructuredTimeBlock, WorkTask, StudyTask, WorkProject, StudySubject, AgentActivityLog, AgentId, AgentExecutionAudit } from '../types';
 import { apiUrl } from '../services/apiBase';
@@ -36,6 +36,16 @@ const ROOM_STORAGE_KEY = 'ait_agent_chat_rooms_v2';
 const loadRooms = (): Record<string, ChatMessage[]> => { try { const raw = localStorage.getItem(ROOM_STORAGE_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; } };
 const agentLabel = (id: string) => id === 'work' ? 'Work Agent' : id === 'study' ? 'Study Agent' : 'Manager Agent';
 const auditSummary = (audit?: AgentExecutionAudit) => audit ? `${audit.executionMode === 'parallel_specialists_then_manager' ? 'Work + Study → Manager' : audit.finalAgent === 'manager' ? 'Manager' : agentLabel(audit.finalAgent)}｜寫入權限 ${audit.writeAuthorized ? '允許' : '未授權'}｜AI 提案 ${audit.requested}｜接受 ${audit.accepted}｜攔截 ${audit.rejected}` : '';
+const conversationKey = (role: string, content: string, agentId?: string | null) => `${role}|${agentId || ''}|${content}`;
+const dbRowToMessage = (row: any): ChatMessage => ({
+  id: `db-conversation-${String(row.id)}`,
+  sender: row.role === 'user' ? 'user' : 'agent',
+  agentId: row.agent_id || undefined,
+  agentName: row.agent_id === 'manager' ? 'Manager' : row.agent_id === 'work' ? 'Work Agent' : row.agent_id === 'study' ? 'Study Agent' : undefined,
+  agentRole: row.agent_id === 'manager' ? 'AI 總管' : row.agent_id === 'work' ? '工作管理員' : row.agent_id === 'study' ? '課業管理員' : undefined,
+  text: String(row.content || ''),
+  timestamp: row.created_at ? new Date(row.created_at).toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit', hour12:false }) : '',
+});
 
 export const AiTeamChat: React.FC<AiTeamChatProps> = ({
   messages, onSendMessage, isLoading, onApplyScheduleToToday, currentActiveAgents, allowedAgentIds,
@@ -64,6 +74,50 @@ export const AiTeamChat: React.FC<AiTeamChatProps> = ({
   useEffect(() => { if (!selectableAgents.some(a => a.id === directAgentId)) setDirectAgentId(selectableAgents[0]?.id || 'manager'); }, [allowedAgentIds?.join(','), currentActiveAgents.join(','), agentRegistry.length]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [displayMessages, busy]);
   const appendRoomMessages = (key: string, updater: (current: ChatMessage[]) => ChatMessage[]) => { setRoomMessages(prev => { const next = { ...prev, [key]: updater(prev[key] || []) }; try { localStorage.setItem(ROOM_STORAGE_KEY, JSON.stringify(next)); } catch {} return next; }); };
+
+  const persistConversation = async (message: ChatMessage, role: 'user' | 'assistant') => {
+    try {
+      await fetch(apiUrl('/api/persistence/conversations'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Owner-Id': 'personal-owner' },
+        body: JSON.stringify({
+          sessionId: roomKey,
+          role,
+          agentId: role === 'assistant' ? (message.agentId || selectedAgent.id) : null,
+          content: message.text,
+          projectId: null,
+          taskId: null,
+        }),
+      });
+    } catch (error) {
+      console.warn('Conversation persistence unavailable; local chat history remains available.', error);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPersistentHistory = async () => {
+      try {
+        const response = await fetch(`${apiUrl('/api/persistence/conversations')}?sessionId=${encodeURIComponent(roomKey)}&limit=200`, { headers: { 'X-Owner-Id': 'personal-owner' } });
+        if (!response.ok) return;
+        const data = await response.json();
+        const dbMessages: ChatMessage[] = Array.isArray(data.messages) ? data.messages.map(dbRowToMessage) : [];
+        if (cancelled) return;
+        const localMessages = readRooms()[roomKey] || [];
+        const dbKeys = new Set(dbMessages.map(m => conversationKey(m.sender === 'user' ? 'user' : 'assistant', m.text, m.agentId)));
+        const localUnsynced = localMessages.filter(m => !dbKeys.has(conversationKey(m.sender === 'user' ? 'user' : 'assistant', m.text, m.agentId)));
+        const merged = [...dbMessages, ...localUnsynced];
+        appendRoomMessages(roomKey, () => merged);
+        if (dbMessages.length === 0 && localMessages.length > 0) {
+          await Promise.all(localMessages.map(message => persistConversation(message, message.sender === 'user' ? 'user' : 'assistant')));
+        }
+      } catch (error) {
+        console.warn('Failed to load persistent conversation history; using local history.', error);
+      }
+    };
+    loadPersistentHistory();
+    return () => { cancelled = true; };
+  }, [roomKey]);
 
   const applyActions = (actions: any[]) => {
     const ids: string[] = [];
@@ -125,6 +179,7 @@ export const AiTeamChat: React.FC<AiTeamChatProps> = ({
     const key = roomKey; const roomHistory = roomMessages[key] || [];
     const userMessage: ChatMessage = { id: `direct-user-${Date.now()}`, sender: 'user', text: prompt, timestamp: new Date().toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit', hour12:false }) };
     const history = [...messages, ...roomHistory, userMessage]; appendRoomMessages(key, prev => [...prev, userMessage]); setDirectLoading(true);
+    void persistConversation(userMessage, 'user');
     try {
       const response = await fetch(apiUrl('/api/agent/direct/chat'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message:prompt, agentId:selectedAgent.id, agentName:selectedAgent.name, agentRole:selectedAgent.role, history, context:{ workProjects, workTasks, studySubjects, studyTasks, selectedTaskIds, currentContext:{ workspaceId:selectedAgent.id === 'study' ? 'study' : selectedAgent.id === 'work' ? 'work' : 'manager', chatRoomId } } }) });
       if (!response.ok) { const detail = await response.json().catch(() => ({})); throw new Error(`Direct agent chat returned ${response.status}: ${detail.error || ''}`); }
@@ -132,15 +187,19 @@ export const AiTeamChat: React.FC<AiTeamChatProps> = ({
       const appliedIds = Array.isArray(data.actions) ? applyActions(data.actions) : [];
       const activityLogs = buildActivityLogs(data, prompt, appliedIds); const messageId = `direct-agent-${Date.now()}`;
       if (appliedIds.length) { setSelectedTaskIds(p => p.filter(id => !appliedIds.includes(id))); confetti({ particleCount: 30, spread: 55, origin: { y: .85 } }); }
-      appendRoomMessages(key, prev => [...prev, { id:messageId, sender:'agent', agentId:data.agentId || selectedAgent.id, agentName:data.agentName || selectedAgent.name, agentRole:data.agentRole || selectedAgent.role, text:data.text || '我有收到，你可以繼續說。', timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false}), delegatedAgents:data.routing?.delegatedAgents || [], activityLogs, executionAudit:data.executionAudit, executionVerified:appliedIds.length ? false : undefined }]);
+      const agentMessage: ChatMessage = { id:messageId, sender:'agent', agentId:data.agentId || selectedAgent.id, agentName:data.agentName || selectedAgent.name, agentRole:data.agentRole || selectedAgent.role, text:data.text || data.reply || '我有收到，你可以繼續說。', timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false}), delegatedAgents:data.routing?.delegatedAgents || [], activityLogs, executionAudit:data.executionAudit, executionVerified:appliedIds.length ? false : undefined };
+      appendRoomMessages(key, prev => [...prev, agentMessage]);
+      void persistConversation(agentMessage, 'assistant');
       if (appliedIds.length) verifyLocalPersistence(key, messageId, appliedIds, data.actions);
     } catch (error: any) {
       console.error('Direct employee chat failed:', error);
-      appendRoomMessages(key, prev => [...prev, { id:`direct-error-${Date.now()}`, sender:'agent', agentId:selectedAgent.id, agentName:selectedAgent.name, agentRole:selectedAgent.role, text:`目前 AI 員工執行失敗：${error?.message || '未知錯誤'}。`, timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false}) }]);
+      const errorMessage: ChatMessage = { id:`direct-error-${Date.now()}`, sender:'agent', agentId:selectedAgent.id, agentName:selectedAgent.name, agentRole:selectedAgent.role, text:`目前 AI 員工執行失敗：${error?.message || '未知錯誤'}。`, timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false}) };
+      appendRoomMessages(key, prev => [...prev, errorMessage]);
+      void persistConversation(errorMessage, 'assistant');
     } finally { setDirectLoading(false); }
   };
 
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (!inputText.trim() || busy) return; const text=inputText.trim(); setInputText(''); if (/\b(安排|排程|排定|規劃).{0,20}(今天|明天|時間|時段)/i.test(text) && selectedAgent.id === 'manager') onSendMessage(text); else handleDirectSend(text); };
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (!inputText.trim() || busy) return; const text=inputText.trim(); setInputText(''); if (/\\b(安排|排程|排定|規劃).{0,20}(今天|明天|時間|時段)/i.test(text) && selectedAgent.id === 'manager') onSendMessage(text); else handleDirectSend(text); };
   const handleCopy = (id:string,text:string) => { navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000); };
 
   return <div className="flex flex-col h-full w-full px-2 sm:px-4 py-3">
