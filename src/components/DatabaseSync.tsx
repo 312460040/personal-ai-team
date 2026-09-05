@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { useAppData } from '../context/AppDataContext';
 import type { WorkProject, WorkTask, StudySubject, StudyTask, TodayTimeBlock } from '../types';
 import { apiUrl } from '../services/apiBase';
+import { classifyWorkTaskCategory } from '../data/workTaxonomy';
 
 const OWNER_ID = 'personal-owner';
 const SYNC_DELAY = 900;
@@ -60,12 +61,39 @@ function fromBlock(row: any): TodayTimeBlock {
 
 const userOnly = <T extends { source?: string }>(items: T[]) => items.filter(item => item.source === 'user');
 
+function parseDurationHours(timeRange: string): number {
+  const match = timeRange.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+  if (!match) return 1;
+  const start = Number(match[1]) * 60 + Number(match[2]);
+  const end = Number(match[3]) * 60 + Number(match[4]);
+  const minutes = end >= start ? end - start : end + 24 * 60 - start;
+  return Math.max(0.5, Math.round((minutes / 60) * 10) / 10);
+}
+
+function todayDeadline(timeRange: string): string {
+  const match = timeRange.match(/-\s*(\d{1,2}:\d{2})/);
+  const date = new Date();
+  const dateKey = date.toISOString().slice(0, 10);
+  return `${dateKey} ${match?.[1] || '23:59'}`;
+}
+
 export const DatabaseSync: React.FC = () => {
   const data = useAppData();
   const hydrated = useRef(false);
   const configured = useRef(false);
   const syncing = useRef(false);
   const migrationDone = useRef(false);
+  const processedScheduleKeys = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('ait_schedule_task_sync_v1');
+      if (saved) {
+        const ids = JSON.parse(saved);
+        if (Array.isArray(ids)) ids.forEach((id: string) => processedScheduleKeys.current.add(id));
+      }
+    } catch {}
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +116,6 @@ export const DatabaseSync: React.FC = () => {
         const hasLocal = localProjects.length + localWorkTasks.length + localStudyTasks.length + localSubjects.length + localBlocks.length > 0;
         const hasDb = snapshot.projects.length + snapshot.tasks.length + snapshot.studySubjects.length + snapshot.todayBlocks.length > 0;
 
-        // First connection: preserve existing browser data by migrating it into the shared DB.
         if (!hasDb && hasLocal && !migrationDone.current) {
           await fetch(apiUrl('/api/persistence/sync'), {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID },
@@ -126,6 +153,95 @@ export const DatabaseSync: React.FC = () => {
     void bootstrap();
     return () => { cancelled = true; };
   }, []);
+
+  // A schedule is not just a calendar event: it represents executable work/study.
+  // Keep the Work/Study pages as the task source of truth by materializing every
+  // work/study time block as a task when it does not already exist.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const candidates = data.todayBlocks.filter(block => block.type === 'work' || block.type === 'study');
+    if (!candidates.length) return;
+
+    const run = () => {
+      let changed = false;
+      const now = Date.now();
+      const existingWorkIds = new Set(data.workTasks.map(task => task.id));
+      const existingStudyIds = new Set(data.studyTasks.map(task => task.id));
+      const existingWorkTitles = new Set(data.workTasks.map(task => `${task.title}|${task.deadline.slice(0, 10)}`));
+      const existingStudyTitles = new Set(data.studyTasks.map(task => `${task.title}|${task.deadline.slice(0, 10)}`));
+      const fallbackProject = data.workProjects.find(project => project.source === 'user') || data.workProjects[0];
+      const fallbackSubject = data.studySubjects.find(subject => subject.source === 'user') || data.studySubjects[0];
+
+      candidates.forEach((block, index) => {
+        const key = `${block.id}|${block.title}|${block.timeRange}`;
+        if (processedScheduleKeys.current.has(key)) return;
+        const deadline = todayDeadline(block.timeRange);
+        const hours = parseDurationHours(block.timeRange);
+        const priority = block.priority || (block.visualPriority === 'urgent' ? 'high' : block.visualPriority === 'important' ? 'medium' : 'low');
+
+        if (block.type === 'work') {
+          if (existingWorkIds.has(block.id) || existingWorkTitles.has(`${block.title}|${deadline.slice(0, 10)}`)) {
+            processedScheduleKeys.current.add(key);
+            return;
+          }
+          const category = classifyWorkTaskCategory(block.title, block.notes || '');
+          const categoryNote = category ? `[工作分類] ${category.category}｜${category.item}\n${category.description}` : '[工作分類] 待 Manager Agent 分類';
+          data.addWorkTask({
+            id: `w-task-scheduled-${now}-${index}`,
+            workspaceId: 'work',
+            projectId: data.currentContext.projectId || fallbackProject?.id || 'proj-ai-scheduled',
+            projectName: fallbackProject?.title || 'AI 排程工作（待歸類）',
+            title: block.title,
+            priority,
+            status: 'todo',
+            estimatedHours: hours,
+            startDate: new Date().toISOString().slice(0, 10),
+            deadline,
+            assignee: '本人',
+            notes: `${categoryNote}\n[AIT_SCHEDULED] ${block.timeRange}`,
+            tags: ['AI-SCHEDULED', ...(category ? [category.category, category.item] : [])],
+            isUrgent: priority === 'high',
+            source: 'user',
+            createdBy: 'user',
+          });
+          changed = true;
+        } else {
+          if (existingStudyIds.has(block.id) || existingStudyTitles.has(`${block.title}|${deadline.slice(0, 10)}`)) {
+            processedScheduleKeys.current.add(key);
+            return;
+          }
+          data.addStudyTask({
+            id: `s-task-scheduled-${now}-${index}`,
+            subjectId: fallbackSubject?.id || 'subj-ai-scheduled',
+            subjectName: fallbackSubject?.name || 'AI 排程課業（待歸類）',
+            title: block.title,
+            type: 'study_task',
+            chapter: 'AI 排程',
+            deadline,
+            progress: 0,
+            estimatedHours: hours,
+            priority,
+            difficulty: 'medium',
+            status: 'todo',
+            supervisionNote: '由 Manager Agent 排程建立，請依時段執行。',
+            notes: `[AIT_SCHEDULED] ${block.timeRange}`,
+            source: 'user',
+            createdBy: 'user',
+          });
+          changed = true;
+        }
+
+        processedScheduleKeys.current.add(key);
+      });
+
+      if (changed) {
+        localStorage.setItem('ait_schedule_task_sync_v1', JSON.stringify(Array.from(processedScheduleKeys.current).slice(-300)));
+      }
+    };
+
+    const timer = window.setTimeout(run, 250);
+    return () => window.clearTimeout(timer);
+  }, [data.todayBlocks, data.workTasks, data.studyTasks, data.workProjects, data.studySubjects, data.currentContext]);
 
   useEffect(() => {
     if (!configured.current || !hydrated.current || syncing.current) return;
