@@ -29,7 +29,7 @@ const router = express.Router();
 const WORK_PATTERNS = [
   /工作|任務|待辦|專案|客戶|行銷|主管|職場|上班|截止|deadline/i,
 ];
-const RESEARCH_PATTERNS = [/論文|文獻|研究方法|研究資料|研究設計|統計分析|資料分析|矩陣分解|碩論|學位論文|paper|literature|methodology/i];
+const RESEARCH_PATTERNS = [/研究|研究任務|研究計畫|研究專題|論文|文獻|研究方法|研究資料|研究設計|統計分析|資料分析|矩陣分解|碩論|學位論文|paper|literature|methodology/i];
 const STUDY_PATTERNS = [
   /課業|作業|考試|讀書|學習|教授|課程|複習|lab/i,
 ];
@@ -59,7 +59,7 @@ export function routeManagerRequest(message: string): RouteResult {
   }
 
   if (isResearch) {
-    return { primaryAgent: 'research', delegatedAgents: ['research'], intent: 'research', reason: '辨識為論文／文獻／研究方法／研究資料分析需求。', requiresDataWrite };
+    return { primaryAgent: 'research', delegatedAgents: ['research'], intent: 'research', reason: '辨識為研究／論文／文獻／研究方法／研究資料分析需求。', requiresDataWrite };
   }
 
   if (isWork) {
@@ -77,7 +77,7 @@ export function routeManagerRequest(message: string): RouteResult {
       primaryAgent: 'study',
       delegatedAgents: ['study'],
       intent: 'study',
-      reason: '辨識為課業／研究／學習管理需求。',
+      reason: '辨識為課業／學習管理需求。',
       requiresDataWrite,
     };
   }
@@ -105,7 +105,7 @@ export function buildTeamExecutionPlan(route: RouteResult): TeamExecutionPlan {
     steps.push({
       agentId,
       role: 'specialist',
-      purpose: agentId === 'work' ? '讀取工作 User Data，處理工作專案與任務。' : agentId === 'research' ? '處理論文、文獻、研究方法與研究資料分析。' : '讀取課業 User Data，處理學習與研究需求。',
+      purpose: agentId === 'work' ? '讀取工作 User Data，處理工作專案與任務。' : agentId === 'research' ? '處理論文、文獻、研究方法與研究資料分析。' : '讀取課業 User Data，處理學習與課業需求。',
       status: 'queued',
     });
   });
