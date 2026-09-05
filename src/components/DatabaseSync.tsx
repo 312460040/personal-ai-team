@@ -243,6 +243,53 @@ export const DatabaseSync: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [data.todayBlocks, data.workTasks, data.studyTasks, data.workProjects, data.studySubjects, data.currentContext]);
 
+  // Research is treated as a study-domain task in the user-facing Study page.
+  // The Manager create flow historically classified the phrase「研究任務」as work,
+  // so mirror only AI-created research tasks into Study Tasks instead of silently
+  // moving/deleting the original Work Task. This keeps the original audit trail
+  // while making research work visible in the 課業任務 tab as requested.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const researchTasks = data.workTasks.filter((task) => {
+      const text = `${task.title} ${task.notes || ''}`;
+      return task.source === 'user' && /研究/.test(text) && /AI 對話|User-Created|由使用者透過 AI/.test(text);
+    });
+    if (!researchTasks.length) return;
+
+    const run = () => {
+      researchTasks.forEach((task) => {
+        const linkedId = `s-task-research-${task.id}`;
+        const alreadyLinked = data.studyTasks.some((studyTask) =>
+          studyTask.id === linkedId || studyTask.notes?.includes(`[RESEARCH_LINK:${task.id}]`)
+        );
+        if (alreadyLinked) return;
+
+        const fallbackSubject = data.studySubjects.find(subject => subject.source === 'user') || data.studySubjects[0];
+        data.addStudyTask({
+          id: linkedId,
+          subjectId: fallbackSubject?.id || 'subj-research',
+          subjectName: fallbackSubject?.name || '研究／專題（待歸類）',
+          title: task.title,
+          type: 'study_task',
+          chapter: '研究任務',
+          deadline: task.deadline || '',
+          progress: 0,
+          estimatedHours: Number(task.estimatedHours) || 1,
+          priority: task.priority,
+          difficulty: 'medium',
+          status: task.status === 'completed' ? 'completed' : 'todo',
+          supervisionNote: '由 Manager Agent 建立的研究任務，已同步至課業任務。',
+          notes: `由 Manager Agent 建立之研究任務。\n[RESEARCH_LINK:${task.id}]`,
+          source: 'user',
+          createdBy: 'user',
+        });
+      });
+    };
+
+    const timer = window.setTimeout(run, 100);
+    return () => window.clearTimeout(timer);
+  }, [data.workTasks, data.studyTasks, data.studySubjects]);
+
   useEffect(() => {
     if (!configured.current || !hydrated.current || syncing.current) return;
     const timer = window.setTimeout(async () => {
