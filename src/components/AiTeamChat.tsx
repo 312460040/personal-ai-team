@@ -61,6 +61,22 @@ export const AiTeamChat: React.FC<AiTeamChatProps> = ({ messages, onSendMessage,
     })();
     return () => { cancelled = true; };
   }, [roomKey]);
+  const refreshRoomFromDb = async () => {
+    try {
+      const r = await fetch(`${apiUrl('/api/persistence/conversations')}?sessionId=${encodeURIComponent(roomKey)}&limit=200`, { headers: { 'X-Owner-Id': 'personal-owner' } });
+      if (!r.ok) return;
+      const data = await r.json();
+      const db = Array.isArray(data.messages) ? data.messages.map(fromDb) : [];
+      const local = loadRooms()[roomKey] || [];
+      const keys = new Set(db.map(messageKey));
+      setRoomMessages(prev => ({ ...prev, [roomKey]: [...db, ...local.filter(m => !keys.has(messageKey(m)))] }));
+    } catch { /* keep current room state */ }
+  };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => { void refreshRoomFromDb(); }, 8000);
+    return () => window.clearInterval(timer);
+  }, [roomKey]);
   const append = (items: ChatMessage[]) => setRoomMessages(prev => { const next = { ...prev, [roomKey]: [...(prev[roomKey] || []), ...items] }; try { localStorage.setItem(ROOM_STORAGE_KEY, JSON.stringify(next)); } catch {} return next; });
   const persist = async (m: ChatMessage, role: 'user' | 'assistant') => { try { await fetch(apiUrl('/api/persistence/conversations'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ sessionId: roomKey, role, agentId: role === 'assistant' ? (m.agentId || selectedAgent.id) : null, content: m.text }) }); } catch {} };
   const mentionedPerson = (text: string) => { const m = text.match(/(?:^|\s)@([^\s@]+)/); if (!m) return undefined; const name = m[1].replace(/[，。！？、,:：;；]+$/, ''); const pool = people.length ? people : loadPeople(); return pool.find(p => p.name === name); };
@@ -80,16 +96,16 @@ export const AiTeamChat: React.FC<AiTeamChatProps> = ({ messages, onSendMessage,
   };
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault(); const prompt = inputText.trim(); if (!prompt || busy) return; setInputText('');
-    const person = mentionedPerson(prompt); const user: ChatMessage = { id: `direct-user-${Date.now()}`, sender: 'user', text: prompt, timestamp: timeNow() }; append([user]); setLoading(true); void persist(user, 'user');
+    const person = mentionedPerson(prompt); const user: ChatMessage = { id: `direct-user-${Date.now()}`, sender: 'user', text: prompt, timestamp: timeNow(), chatRoomId: roomKey }; append([user]); setLoading(true); void persist(user, 'user');
     try {
       const response = await fetch(apiUrl('/api/agent/direct/chat'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: prompt, agentId: selectedAgent.id, agentName: selectedAgent.name, agentRole: selectedAgent.role, history: [...messages, ...(roomMessages[roomKey] || []), user], context: { workProjects, workTasks, studySubjects, studyTasks, people: people.length ? people : loadPeople(), mentionedAssignee: person?.name || null, currentContext: { workspaceId: selectedAgent.id === 'study' ? 'study' : selectedAgent.id === 'work' ? 'work' : 'manager', chatRoomId: roomKey } } }) });
       if (!response.ok) throw new Error(`AI 員工回應 ${response.status}`);
       const data = await response.json(); const actions = Array.isArray(data.actions) ? data.actions : []; const ids = applyActions(actions, person);
       const assignment = person ? `\n\n> 👤 **已指派：${person.name}**${person.role ? `（${person.role}）` : ''}` : '';
       const activityLogs: AgentActivityLog[] = [{ id: `act-${Date.now()}`, timestamp: new Date().toISOString(), stepIndex: 1, fromAgent: (data.agentId || selectedAgent.id) as AgentId, action: actions.length ? '分析 → 寫入 Task' : '分析需求', summary: actions.length ? `已套用 ${ids.length} 筆任務${person ? `，指派給 ${person.name}` : ''}` : '已完成 AI 分析', status: 'completed', durationMs: 0 }];
-      const reply: ChatMessage = { id: `direct-agent-${Date.now()}`, sender: 'agent', agentId: data.agentId || selectedAgent.id, agentName: data.agentName || selectedAgent.name, agentRole: data.agentRole || selectedAgent.role, text: `${data.text || data.reply || '我有收到。'}${assignment}`, timestamp: timeNow(), delegatedAgents: data.routing?.delegatedAgents || [], activityLogs, executionAudit: data.executionAudit, executionVerified: actions.length ? ids.length === actions.length : undefined };
+      const reply: ChatMessage = { id: `direct-agent-${Date.now()}`, sender: 'agent', chatRoomId: roomKey, agentId: data.agentId || selectedAgent.id, agentName: data.agentName || selectedAgent.name, agentRole: data.agentRole || selectedAgent.role, text: `${data.text || data.reply || '我有收到。'}${assignment}`, timestamp: timeNow(), delegatedAgents: data.routing?.delegatedAgents || [], activityLogs, executionAudit: data.executionAudit, executionVerified: actions.length ? ids.length === actions.length : undefined };
       append([reply]); void persist(reply, 'assistant');
-    } catch (error: any) { const reply: ChatMessage = { id: `direct-error-${Date.now()}`, sender: 'agent', agentId: selectedAgent.id, agentName: selectedAgent.name, agentRole: selectedAgent.role, text: `目前 AI 員工執行失敗：${error?.message || '未知錯誤'}。`, timestamp: timeNow() }; append([reply]); void persist(reply, 'assistant'); }
+    } catch (error: any) { const reply: ChatMessage = { id: `direct-error-${Date.now()}`, sender: 'agent', chatRoomId: roomKey, agentId: selectedAgent.id, agentName: selectedAgent.name, agentRole: selectedAgent.role, text: `目前 AI 員工執行失敗：${error?.message || '未知錯誤'}。`, timestamp: timeNow() }; append([reply]); void persist(reply, 'assistant'); }
     finally { setLoading(false); }
   };
   const copy = (id: string, text: string) => { void navigator.clipboard?.writeText(text); setCopiedId(id); window.setTimeout(() => setCopiedId(null), 1500); };
