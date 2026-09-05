@@ -19,7 +19,7 @@ type StudyTaskLike = {
   createdBy?: 'user' | 'system';
 };
 
-const PROCESSED_KEY = 'ait_research_task_bridge_processed_v2';
+const PROCESSED_KEY = 'ait_research_task_bridge_processed_v3';
 const STUDY_TASKS_KEY = 'ait_study_tasks_v2';
 const MESSAGES_KEY = 'ait_messages_v2';
 
@@ -51,7 +51,7 @@ function isResearchTask(text: string) {
 
 function parseSingleCreatedTask(text: string): StudyTaskLike | null {
   if (!isResearchTask(text)) return null;
-  const title = text.match(/(?:任務名稱|任務名稱：)\s*\*?\*?([^\n*]+)/i)?.[1]?.trim();
+  const title = text.match(/任務名稱[^：:\n]*[：:]\s*\*?\*?([^\n*]+?)(?:\*+)?\s*$/im)?.[1]?.trim();
   if (!title) return null;
   const priorityRaw = text.match(/優先順序[^：:]*[：:]\s*`?\s*(high|medium|low)/i)?.[1]?.toLowerCase();
   const hoursRaw = text.match(/預估工時[^：:]*[：:]\s*\*?\*?(\d+(?:\.\d+)?)/i)?.[1];
@@ -59,7 +59,7 @@ function parseSingleCreatedTask(text: string): StudyTaskLike | null {
   const id = text.match(/任務 ID[^`]*`([^`]+)`/i)?.[1] || `s-task-research-${Date.now()}`;
   return normalizeStudyTask({
     id,
-    title: title.replace(/\*+$/g, '').trim(),
+    title,
     priority: priorityRaw || 'medium',
     estimatedHours: hoursRaw ? Number(hoursRaw) : 1,
     deadline,
@@ -107,7 +107,6 @@ function consumeManagerTasks() {
       continue;
     }
 
-    // Compatibility path for the older singular creation response.
     const key = `${message.id}:single-research`;
     if (!processed.has(key)) {
       const task = parseSingleCreatedTask(message.text);
@@ -130,11 +129,10 @@ function consumeManagerTasks() {
 }
 
 /**
- * This bridge is mounted outside AppDataProvider because Manager responses can
- * arrive in a different response shape than AppDataContext historically handled.
+ * Mounted outside AppDataProvider so it can bridge every Manager response shape.
  * It writes the canonical localStorage Study Task store and reloads once so the
- * provider hydrates the new task immediately. No duplicate is created because
- * task IDs and processed message markers are checked first.
+ * provider hydrates the new task immediately. IDs and processed message markers
+ * make the operation idempotent.
  */
 export const ResearchTaskBridge: React.FC = () => {
   useEffect(() => {
