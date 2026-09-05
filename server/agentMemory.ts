@@ -12,13 +12,19 @@ type MemoryRow = {
 
 const MEMORY_DOMAINS = new Set<MemoryDomain>(['manager', 'work', 'study', 'research']);
 
+function supabaseConfig() {
+  const base = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
+  return { base, key };
+}
+
 function configured() {
-  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const { base, key } = supabaseConfig();
+  return Boolean(base && key);
 }
 
 async function supabase(path: string, options: RequestInit = {}) {
-  const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const { base, key } = supabaseConfig();
   if (!base || !key) return null;
   const response = await fetch(`${base}/rest/v1/${path}`, {
     ...options,
