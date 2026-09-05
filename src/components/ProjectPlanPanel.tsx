@@ -1,0 +1,69 @@
+import React, { useEffect, useState } from 'react';
+import { BookOpen, Save } from 'lucide-react';
+import { apiUrl } from '../services/apiBase';
+import type { WorkProject } from '../types';
+
+type Plan = {
+  purpose: string;
+  scope: string;
+  workflow: string;
+  deliverables: string;
+  standards: string;
+  responsibilities: string;
+  milestones: string;
+  notes: string;
+};
+
+const emptyPlan = (): Plan => ({ purpose: '', scope: '', workflow: '', deliverables: '', standards: '', responsibilities: '', milestones: '', notes: '' });
+
+const fields: Array<[keyof Plan, string, string]> = [
+  ['purpose', '專案目的', '為什麼要做？希望達成什麼結果？'],
+  ['scope', '工作範圍', '包含哪些工作、不包含哪些工作？'],
+  ['workflow', '工作程序', '例如：需求溝通 → 腳本 → 拍攝 → 剪輯 → 確認 → 發布。'],
+  ['deliverables', '交付成果', '最後需要產出什麼？例如影片、貼文、廣告素材、報告。'],
+  ['standards', '執行標準／注意事項', '品牌規範、品質要求、檔案規格、審核方式等。'],
+  ['responsibilities', '人員與責任', '誰負責、誰確認、需要與哪些人溝通？'],
+  ['milestones', '階段與里程碑', '目前階段、下一步、預計完成時間。'],
+  ['notes', '補充紀錄', '其他重要背景、決策與歷史紀錄。'],
+];
+
+export const ProjectPlanPanel: React.FC<{ project: WorkProject }> = ({ project }) => {
+  const [plan, setPlan] = useState<Plan>(emptyPlan());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(apiUrl(`/api/persistence/project-plan/${encodeURIComponent(project.id)}`), { headers: { 'X-Owner-Id': 'personal-owner' } })
+      .then(r => r.json()).then(data => { if (!cancelled) setPlan({ ...emptyPlan(), ...(data?.plan || {}) }); })
+      .catch(() => { if (!cancelled) setPlan(emptyPlan()); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  const update = (key: keyof Plan, value: string) => setPlan(prev => ({ ...prev, [key]: value }));
+  const save = async () => {
+    setSaving(true); setSaved(false);
+    try {
+      const response = await fetch(apiUrl(`/api/persistence/project-plan/${encodeURIComponent(project.id)}`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ plan }),
+      });
+      if (!response.ok) throw new Error('save failed');
+      setSaved(true); window.setTimeout(() => setSaved(false), 1800);
+    } catch { window.alert('規劃書儲存失敗，請稍後再試。'); }
+    finally { setSaving(false); }
+  };
+
+  return <section className="rounded-2xl bg-white border border-[#E5E2DC] shadow-xs p-5">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-[#EBE8E1]">
+      <div><div className="flex items-center gap-2"><BookOpen className="w-4 h-4 text-[#385244]"/><h3 className="text-sm font-bold text-[#2D322E]">專案規劃書</h3></div><p className="text-[10px] text-[#8C938D] mt-1">讓員工先理解整體目的、工作程序與交付標準，再開始執行任務。</p></div>
+      <button type="button" onClick={save} disabled={loading || saving} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#385244] text-white text-xs font-semibold disabled:opacity-50"><Save className="w-3.5 h-3.5"/>{saving ? '儲存中…' : saved ? '已儲存' : '儲存規劃書'}</button>
+    </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {fields.map(([key, label, placeholder]) => <label key={key} className="block"><span className="block text-[11px] font-bold text-[#4E5A52] mb-1.5">{label}</span><textarea value={plan[key]} onChange={e => update(key, e.target.value)} placeholder={placeholder} rows={key === 'workflow' || key === 'milestones' ? 4 : 3} className="w-full rounded-xl border border-[#DDD8CE] bg-[#FAF8F5] px-3 py-2.5 text-xs text-[#2D322E] outline-none focus:border-[#7D9885] resize-y" /></label>)}
+    </div>
+  </section>;
+};
+export default ProjectPlanPanel;
