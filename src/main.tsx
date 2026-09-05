@@ -1,11 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { installManagerPlanningOverlay } from './services/managerPlanningOverlay';
-import './services/apiRouting';
-import App from './App.tsx';
 import './index.css';
-
-installManagerPlanningOverlay();
 
 type ErrorBoundaryState = { hasError: boolean; message: string };
 
@@ -19,36 +14,54 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, ErrorBou
 
   componentDidCatch(error: unknown, info: React.ErrorInfo) {
     console.error('Personal AI Team render error:', error, info);
-    const reporter = (window as any).__aitBootFail;
-    if (typeof reporter === 'function') reporter((error instanceof Error ? error.stack || error.message : String(error)));
   }
 
   render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-[#F8F7F4] p-6 text-[#2D322E]">
-          <div className="w-full max-w-xl rounded-2xl border border-[#E5E2DC] bg-[#FDFCFB] p-7 shadow-xl">
-            <h1 className="text-xl font-bold mb-2">Personal AI Team 啟動失敗</h1>
-            <p className="text-sm text-[#68716A] leading-6">React 已成功載入，但畫面元件啟動時發生錯誤。錯誤資訊已顯示在下方，方便直接定位問題。</p>
-            <pre className="mt-4 rounded-xl bg-[#FAF0E6] p-4 text-xs leading-5 text-[#7A4022] whitespace-pre-wrap break-words">{this.state.message}</pre>
-            <button className="mt-4 rounded-xl bg-[#385244] px-4 py-2 text-sm font-semibold text-white" onClick={() => window.location.reload()}>重新載入</button>
-          </div>
-        </div>
-      );
-    }
+    if (this.state.hasError) return <BootError title="Personal AI Team 啟動失敗" message={this.state.message} />;
     return this.props.children;
   }
+}
+
+function BootError({ title, message }: { title: string; message: string }) {
+  return (
+    <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8F7F4', color: '#2D322E', fontFamily: 'system-ui, sans-serif' }}>
+      <div style={{ width: '100%', maxWidth: 760, border: '1px solid #E5E2DC', borderRadius: 18, background: '#FDFCFB', padding: 28, boxShadow: '0 12px 40px rgba(0,0,0,.08)' }}>
+        <h1 style={{ margin: '0 0 10px', fontSize: 22 }}>{title}</h1>
+        <p style={{ margin: 0, lineHeight: 1.7, color: '#68716A' }}>前端檔案已載入，但應用程式啟動時發生錯誤。請把下方錯誤畫面截圖給我，我可以直接定位。</p>
+        <pre style={{ marginTop: 18, padding: 16, borderRadius: 12, background: '#FAF0E6', color: '#7A4022', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, lineHeight: 1.6 }}>{message}</pre>
+        <button style={{ marginTop: 16, border: 0, borderRadius: 10, padding: '10px 16px', background: '#385244', color: '#fff', cursor: 'pointer' }} onClick={() => window.location.reload()}>重新載入</button>
+      </div>
+    </div>
+  );
 }
 
 const rootElement = document.getElementById('root');
 if (!rootElement) throw new Error('Personal AI Team root element not found');
 
-createRoot(rootElement).render(
-  <React.StrictMode>
-    <AppErrorBoundary>
-      <div data-ait-app="true" className="min-h-screen">
-        <App />
-      </div>
-    </AppErrorBoundary>
-  </React.StrictMode>,
-);
+const root = createRoot(rootElement);
+
+root.render(<BootError title="Personal AI Team 載入中…" message="正在載入前端模組，請稍候。" />);
+
+Promise.all([
+  import('./services/managerPlanningOverlay'),
+  import('./services/apiRouting'),
+  import('./App.tsx'),
+])
+  .then(([planningModule, _routingModule, appModule]) => {
+    planningModule.installManagerPlanningOverlay();
+    const App = appModule.default;
+    root.render(
+      <React.StrictMode>
+        <AppErrorBoundary>
+          <div data-ait-app="true" className="min-h-screen">
+            <App />
+          </div>
+        </AppErrorBoundary>
+      </React.StrictMode>,
+    );
+  })
+  .catch((error: unknown) => {
+    const message = error instanceof Error ? (error.stack || error.message) : String(error);
+    console.error('Personal AI Team module boot error:', error);
+    root.render(<BootError title="Personal AI Team 模組載入失敗" message={message} />);
+  });
