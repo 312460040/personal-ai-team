@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import './agentMemory';
 import organizationRouter from './organization';
 
 const router = Router();
