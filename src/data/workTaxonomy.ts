@@ -25,11 +25,26 @@ export const WORK_TAXONOMY: WorkTaxonomyItem[] = [
   { category: '網站管理', item: '網站維護', description: '監控網站運行狀態，處理資料更新與基本錯誤排解。', keywords: ['網站維護', '網站更新', '錯誤排解', 'HTML', '網站'] },
   { category: '網站管理', item: '優化構想', description: '提出版面與功能上的改進計畫，進行 SEO 優化。', keywords: ['SEO', '網站優化', '版面優化', '功能優化'] },
   { category: '網站管理', item: 'Google 商務維護', description: '經營商家資訊、回覆評論並更新最新動態圖片。', keywords: ['Google商家', 'Google 商務', '評論', '商家資訊', 'Google地圖'] },
-  { category: '社群管理', item: '分享社團', description: '將適合的內容分享至相關社團與社群。', keywords: ['分享社團', '社團', '社群分享', '轉貼'] },
-  { category: '社群管理', item: '定期發文', description: '依內容排程持續發布社群貼文。', keywords: ['定期發文', '發文排程', '社群排程', '發布貼文'] },
-  { category: '社群管理', item: '客服回覆', description: '處理 Google 評論、Facebook 私訊、FB 貼文留言與 LINE 回覆。', keywords: ['客服', '回覆', 'Google評論', 'Facebook私訊', '留言', 'LINE'] },
-  { category: '社群管理', item: '資訊優化', description: '整理社群與對外資訊，使內容更清楚、一致且容易被找到。', keywords: ['資訊優化', '資訊整理', '社群資訊', '內容優化'] },
+  { category: '社群管理', item: '分享社團', description: '將適合的內容分享至相關社團與社群；平台需另外標記，避免不同平台混在一起。', keywords: ['分享社團', '社團', '社群分享', '轉貼'] },
+  { category: '社群管理', item: '定期發文', description: '依內容排程持續發布社群貼文；平台需另外標記。', keywords: ['定期發文', '發文排程', '社群排程', '發布貼文'] },
+  { category: '社群管理', item: '客服回覆', description: '處理各平台留言、私訊與評論；平台需另外標記。', keywords: ['客服', '回覆', 'Google評論', 'Facebook私訊', '留言', 'LINE'] },
+  { category: '社群管理', item: '資訊優化', description: '整理社群與對外資訊，使內容更清楚、一致且容易被找到；平台需另外標記。', keywords: ['資訊優化', '資訊整理', '社群資訊', '內容優化'] },
 ];
+
+export const SOCIAL_PLATFORM_RULES: { label: string; keywords: string[] }[] = [
+  { label: 'Facebook', keywords: ['facebook', 'fb', '臉書', '粉專', '粉絲專頁', '社團'] },
+  { label: 'Instagram', keywords: ['instagram', 'ig'] },
+  { label: 'LINE', keywords: ['line', '官方帳號', 'line oa'] },
+  { label: 'Google 商家', keywords: ['google評論', 'google 商家', 'google商家', 'google 地圖', 'google地圖', 'google business'] },
+  { label: 'YouTube', keywords: ['youtube'] },
+  { label: 'Threads', keywords: ['threads'] },
+  { label: 'TikTok', keywords: ['tiktok', '抖音'] },
+];
+
+export function inferSocialPlatforms(title: string, notes = '', tags: string[] = []): string[] {
+  const text = `${title} ${notes} ${tags.join(' ')}`.toLowerCase();
+  return SOCIAL_PLATFORM_RULES.filter(rule => rule.keywords.some(keyword => text.includes(keyword.toLowerCase()))).map(rule => rule.label);
+}
 
 export function classifyWorkTaskCategory(title: string, notes = ''): WorkTaxonomyItem | null {
   const text = `${title} ${notes}`.toLowerCase();
