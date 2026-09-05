@@ -15,7 +15,6 @@ const SITES = [
 
 export function ClientHierarchyBridge() {
   useEffect(() => {
-    if (localStorage.getItem(DONE_KEY) === '1') return;
     try {
       const projects = JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]');
       const tasks = JSON.parse(localStorage.getItem(TASKS_KEY) || '[]');
@@ -23,6 +22,17 @@ export function ClientHierarchyBridge() {
       if (!parent) return;
 
       const projectMap = new Map(projects.map((p: any) => [String(p.id), p]));
+      const hierarchyComplete = SITES.every(([id]) => projectMap.has(id) && projectMap.get(id)?.parentProjectId === PARENT_ID);
+      const taskMap: Array<[RegExp, string, string]> = [
+        [/立博運動員影片/, 'proj-site-libor', '立博'],
+        [/立博廣告影片素材|立博｜廣告/, 'proj-site-libor', '立博'],
+        [/新仁影片/, 'proj-site-xinren', '新仁'],
+        [/世博｜廣告/, 'proj-site-shibo', '世博'],
+        [/板國影片/, 'proj-site-banguo', '板國'],
+      ];
+      const tasksNeedRemap = tasks.some((task: any) => task.projectId === PARENT_ID && taskMap.some(([pattern]) => pattern.test(String(task.title || ''))));
+      if (localStorage.getItem(DONE_KEY) === '1' && hierarchyComplete && !tasksNeedRemap) return;
+
       const nextProjects = [...projects];
       SITES.forEach(([id, title]) => {
         if (projectMap.has(id)) return;
@@ -45,13 +55,6 @@ export function ClientHierarchyBridge() {
         });
       });
 
-      const taskMap: Array<[RegExp, string, string]> = [
-        [/立博運動員影片/, 'proj-site-libor', '立博'],
-        [/立博廣告影片素材|立博｜廣告/, 'proj-site-libor', '立博'],
-        [/新仁影片/, 'proj-site-xinren', '新仁'],
-        [/世博｜廣告/, 'proj-site-shibo', '世博'],
-        [/板國影片/, 'proj-site-banguo', '板國'],
-      ];
       const nextTasks = tasks.map((task: any) => {
         if (task.projectId !== PARENT_ID) return task;
         const hit = taskMap.find(([pattern]) => pattern.test(String(task.title || '')));
