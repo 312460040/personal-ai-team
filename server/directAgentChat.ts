@@ -135,17 +135,18 @@ router.post('/chat', async (req, res) => {
     if (requestedAgentId === 'manager' && routing.intent === 'mixed') {
       const commonRules = '你是被 Manager 委派的專業 Agent。只分析你自己的領域 User Data，提供可供 Manager 決策的事實、風險、優先級與建議。不要替 Manager 做最終回覆，也不要處理另一個領域。';
       const workPrompt = buildBasePrompt(AGENTS.work, routing, executionLabel, { workProjects, workTasks }, selectedTaskIds.filter(id => workTasks.some(t => String(t.id) === id)), safeHistory) + `\n\n【專業委派】\n${commonRules}\n你現在只負責工作領域。`;
-      const studyPrompt = buildBasePrompt(AGENTS.study, routing, executionLabel, { studySubjects, studyTasks }, selectedTaskIds.filter(id => studyTasks.some(t => String(t.id) === id)), safeHistory) + `\n\n【專業委派】\n${commonRules}\n你現在只負責課業／研究領域。`;
-      const [workResult, studyResult] = await Promise.all([callGemini(client, workPrompt, prompt), callGemini(client, studyPrompt, prompt)]);
-      specialistResults = { work: workResult, study: studyResult };
-      const managerPrompt = `你是 Manager Agent，是 Personal AI Team 的唯一總管。Owner 的需求同時涉及工作與課業。你已收到 Work Agent 與 Study Agent 的獨立分析，現在整合成最終回覆。\nWork Agent：${JSON.stringify(workResult)}\nStudy Agent：${JSON.stringify(studyResult)}\nUser Data：${JSON.stringify(data)}\n只在 Owner 明確要求修改或新增任務時產生 actions。新增任務請使用 action=create，並從真實 User Data 選擇 projectId/subjectId；找不到就不要猜。用自然繁體中文回答。`;
+      const researchPrompt = buildBasePrompt(AGENTS.research, routing, executionLabel, { workProjects, studySubjects }, [], safeHistory) + `\n\n【專業委派】\n${commonRules}\n你現在只負責論文、文獻、研究方法與研究資料分析。`;
+      const secondSpecialist = routing.delegatedAgents.includes('research') ? researchPrompt : buildBasePrompt(AGENTS.study, routing, executionLabel, { studySubjects, studyTasks }, selectedTaskIds.filter(id => studyTasks.some(t => String(t.id) === id)), safeHistory) + `\n\n【專業委派】\n${commonRules}\n你現在只負責課業領域。`;
+      const [workResult, secondResult] = await Promise.all([callGemini(client, workPrompt, prompt), callGemini(client, secondSpecialist, prompt)]);
+      specialistResults = routing.delegatedAgents.includes('research') ? { work: workResult, research: secondResult } : { work: workResult, study: secondResult };
+      const managerPrompt = `你是 Manager Agent，是 Personal AI Team 的唯一總管。Owner 的需求同時涉及工作與課業或研究。你已收到 Work Agent 與對應的 Study/Research Agent 的獨立分析，現在整合成最終回覆。\nWork Agent：${JSON.stringify(workResult)}\n專業 Agent：${JSON.stringify(secondResult)}\nUser Data：${JSON.stringify(data)}\n只在 Owner 明確要求修改或新增任務時產生 actions。新增任務請使用 action=create，並從真實 User Data 選擇 projectId/subjectId；找不到就不要猜。用自然繁體中文回答。`;
       result = await callGemini(client, managerPrompt, prompt); finalAgentId = 'manager';
     } else {
       result = await callGemini(client, buildBasePrompt(profile, routing, executionLabel, data, selectedTaskIds, safeHistory), prompt);
     }
     const normalized = normalizeActions(result.actions, allTasks, workProjects, studySubjects, selectedTaskIds, routing.requiresDataWrite);
     const executionAudit = { ...normalized.audit, executionMode: routing.intent === 'mixed' ? 'parallel_specialists_then_manager' : 'single_agent', finalAgent: finalAgentId };
-    return res.json({ sender: 'agent', agentId: finalAgentId, requestedAgentId, agentName: AGENTS[finalAgentId]?.name || profile.name, agentRole: AGENTS[finalAgentId]?.role || profile.role, text: String(result.reply || '我有收到。你可以繼續說。'), actions: normalized.actions, routing: { ...routing, effectiveAgentId: finalAgentId }, executionPlan, execution: routing.intent === 'mixed' ? { mode: 'parallel_specialists_then_manager', specialists: ['work', 'study'], specialistResults, finalAgent: 'manager', audit: executionAudit } : { mode: 'single_agent', finalAgent: finalAgentId, audit: executionAudit }, executionAudit });
+    return res.json({ sender: 'agent', agentId: finalAgentId, requestedAgentId, agentName: AGENTS[finalAgentId]?.name || profile.name, agentRole: AGENTS[finalAgentId]?.role || profile.role, text: String(result.reply || '我有收到。你可以繼續說。'), actions: normalized.actions, routing: { ...routing, effectiveAgentId: finalAgentId }, executionPlan, execution: routing.intent === 'mixed' ? { mode: 'parallel_specialists_then_manager', specialists: routing.delegatedAgents.filter((id: string) => id !== 'manager'), specialistResults, finalAgent: 'manager', audit: executionAudit } : { mode: 'single_agent', finalAgent: finalAgentId, audit: executionAudit }, executionAudit });
   } catch (error) {
     console.error('Direct agent chat error:', error);
     return res.status(500).json({ error: 'Direct agent chat failed' });
