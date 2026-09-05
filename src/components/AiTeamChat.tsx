@@ -5,214 +5,29 @@ import confetti from 'canvas-confetti';
 import type { ChatMessage, AgentInfo, StructuredTimeBlock, WorkTask, StudyTask, WorkProject, StudySubject, AgentActivityLog, AgentId, AgentExecutionAudit } from '../types';
 import { apiUrl } from '../services/apiBase';
 
-interface AiTeamChatProps {
-  messages: ChatMessage[];
-  onSendMessage: (text: string) => void;
-  isLoading: boolean;
-  onApplyScheduleToToday: (blocks: StructuredTimeBlock[]) => void;
-  currentActiveAgents: string[];
-  allowedAgentIds?: string[];
-  agentRegistry?: AgentInfo[];
-  workTasks?: WorkTask[];
-  studyTasks?: StudyTask[];
-  workProjects?: WorkProject[];
-  studySubjects?: StudySubject[];
-  onToggleWorkTask?: (id: string) => void;
-  onToggleStudyTask?: (id: string) => void;
-  onUpdateWorkTask?: (task: WorkTask) => void;
-  onUpdateStudyTask?: (task: StudyTask) => void;
-  onAddWorkTask?: (task: any) => void;
-  onAddStudyTask?: (task: any) => void;
-  chatRoomId?: string;
-}
-
+interface AiTeamChatProps { messages: ChatMessage[]; onSendMessage: (text: string) => void; isLoading: boolean; onApplyScheduleToToday: (blocks: StructuredTimeBlock[]) => void; currentActiveAgents: string[]; allowedAgentIds?: string[]; agentRegistry?: AgentInfo[]; workTasks?: WorkTask[]; studyTasks?: StudyTask[]; workProjects?: WorkProject[]; studySubjects?: StudySubject[]; onToggleWorkTask?: (id: string) => void; onToggleStudyTask?: (id: string) => void; onUpdateWorkTask?: (task: WorkTask) => void; onUpdateStudyTask?: (task: StudyTask) => void; onAddWorkTask?: (task: any) => void; onAddStudyTask?: (task: any) => void; chatRoomId?: string; }
 type DirectAgent = { id: string; name: string; role: string; icon: React.ReactNode };
-const defaultAgents: DirectAgent[] = [
-  { id: 'manager', name: 'Manager', role: 'AI 總管', icon: <Bot className="w-3.5 h-3.5" /> },
-  { id: 'work', name: 'Work Agent', role: '工作管理員', icon: <Briefcase className="w-3.5 h-3.5" /> },
-  { id: 'study', name: 'Study Agent', role: '課業管理員', icon: <GraduationCap className="w-3.5 h-3.5" /> },
-];
+const defaultAgents: DirectAgent[] = [{ id: 'manager', name: 'Manager', role: 'AI 總管', icon: <Bot className="w-3.5 h-3.5" /> }, { id: 'work', name: 'Work Agent', role: '工作管理員', icon: <Briefcase className="w-3.5 h-3.5" /> }, { id: 'study', name: 'Study Agent', role: '課業管理員', icon: <GraduationCap className="w-3.5 h-3.5" /> }];
 const ROOM_STORAGE_KEY = 'ait_agent_chat_rooms_v2';
 const loadRooms = (): Record<string, ChatMessage[]> => { try { const raw = localStorage.getItem(ROOM_STORAGE_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; } };
 const agentLabel = (id: string) => id === 'work' ? 'Work Agent' : id === 'study' ? 'Study Agent' : 'Manager Agent';
 const auditSummary = (audit?: AgentExecutionAudit) => audit ? `${audit.executionMode === 'parallel_specialists_then_manager' ? 'Work + Study → Manager' : audit.finalAgent === 'manager' ? 'Manager' : agentLabel(audit.finalAgent)}｜寫入權限 ${audit.writeAuthorized ? '允許' : '未授權'}｜AI 提案 ${audit.requested}｜接受 ${audit.accepted}｜攔截 ${audit.rejected}` : '';
 const conversationKey = (role: string, content: string, agentId?: string | null) => `${role}|${agentId || ''}|${content}`;
-const dbRowToMessage = (row: any): ChatMessage => ({
-  id: `db-conversation-${String(row.id)}`,
-  sender: row.role === 'user' ? 'user' : 'agent',
-  agentId: row.agent_id || undefined,
-  agentName: row.agent_id === 'manager' ? 'Manager' : row.agent_id === 'work' ? 'Work Agent' : row.agent_id === 'study' ? 'Study Agent' : undefined,
-  agentRole: row.agent_id === 'manager' ? 'AI 總管' : row.agent_id === 'work' ? '工作管理員' : row.agent_id === 'study' ? '課業管理員' : undefined,
-  text: String(row.content || ''),
-  timestamp: row.created_at ? new Date(row.created_at).toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit', hour12:false }) : '',
-});
+const dbRowToMessage = (row: any): ChatMessage => ({ id: `db-conversation-${String(row.id)}`, sender: row.role === 'user' ? 'user' : 'agent', agentId: row.agent_id || undefined, agentName: row.agent_id === 'manager' ? 'Manager' : row.agent_id === 'work' ? 'Work Agent' : row.agent_id === 'study' ? 'Study Agent' : undefined, agentRole: row.agent_id === 'manager' ? 'AI 總管' : row.agent_id === 'work' ? '工作管理員' : row.agent_id === 'study' ? '課業管理員' : undefined, text: String(row.content || ''), timestamp: row.created_at ? new Date(row.created_at).toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit', hour12:false }) : '' });
 
-export const AiTeamChat: React.FC<AiTeamChatProps> = ({
-  messages, onSendMessage, isLoading, onApplyScheduleToToday, currentActiveAgents, allowedAgentIds,
-  agentRegistry = [], workTasks = [], studyTasks = [], workProjects = [], studySubjects = [],
-  onToggleWorkTask = () => {}, onToggleStudyTask = () => {}, onUpdateWorkTask = () => {}, onUpdateStudyTask = () => {},
-  onAddWorkTask = () => {}, onAddStudyTask = () => {}, chatRoomId = 'room-public',
-}) => {
-  const [inputText, setInputText] = useState('');
-  const [directAgentId, setDirectAgentId] = useState('manager');
-  const [roomMessages, setRoomMessages] = useState<Record<string, ChatMessage[]>>(loadRooms);
-  const [directLoading, setDirectLoading] = useState(false);
-  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
-  const [expandedActivities, setExpandedActivities] = useState<Record<string, boolean>>({});
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const allowed = allowedAgentIds || currentActiveAgents;
-  const availableAgents = defaultAgents.filter(a => allowed.includes(a.id));
-  const registryAgents = agentRegistry.filter(a => allowed.includes(a.id) && !defaultAgents.some(x => x.id === a.id));
-  const selectableAgents = [...availableAgents, ...registryAgents.map(a => ({ id: a.id, name: a.name, role: a.roleName, icon: <Bot className="w-3.5 h-3.5" /> }))];
-  const selectedAgent = selectableAgents.find(a => a.id === directAgentId) || selectableAgents[0] || defaultAgents[0];
-  const roomKey = chatRoomId;
-  const displayMessages = [...messages, ...(roomMessages[roomKey] || [])];
-  const busy = directLoading || isLoading;
-
+export const AiTeamChat: React.FC<AiTeamChatProps> = ({ messages, onSendMessage, isLoading, onApplyScheduleToToday, currentActiveAgents, allowedAgentIds, agentRegistry = [], workTasks = [], studyTasks = [], workProjects = [], studySubjects = [], onToggleWorkTask = () => {}, onToggleStudyTask = () => {}, onUpdateWorkTask = () => {}, onUpdateStudyTask = () => {}, onAddWorkTask = () => {}, onAddStudyTask = () => {}, chatRoomId = 'room-public' }) => {
+  const [inputText, setInputText] = useState(''); const [directAgentId, setDirectAgentId] = useState('manager'); const [roomMessages, setRoomMessages] = useState<Record<string, ChatMessage[]>>(loadRooms); const [directLoading, setDirectLoading] = useState(false); const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]); const [expandedActivities, setExpandedActivities] = useState<Record<string, boolean>>({}); const [copiedId, setCopiedId] = useState<string | null>(null); const messagesEndRef = useRef<HTMLDivElement>(null);
+  const allowed = allowedAgentIds || currentActiveAgents; const availableAgents = defaultAgents.filter(a => allowed.includes(a.id)); const registryAgents = agentRegistry.filter(a => allowed.includes(a.id) && !defaultAgents.some(x => x.id === a.id)); const selectableAgents = [...availableAgents, ...registryAgents.map(a => ({ id: a.id, name: a.name, role: a.roleName, icon: <Bot className="w-3.5 h-3.5" /> }))]; const selectedAgent = selectableAgents.find(a => a.id === directAgentId) || selectableAgents[0] || defaultAgents[0]; const roomKey = chatRoomId; const displayMessages = [...messages, ...(roomMessages[roomKey] || [])]; const busy = directLoading || isLoading;
   useEffect(() => { if (!selectableAgents.some(a => a.id === directAgentId)) setDirectAgentId(selectableAgents[0]?.id || 'manager'); }, [allowedAgentIds?.join(','), currentActiveAgents.join(','), agentRegistry.length]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [displayMessages, busy]);
   const appendRoomMessages = (key: string, updater: (current: ChatMessage[]) => ChatMessage[]) => { setRoomMessages(prev => { const next = { ...prev, [key]: updater(prev[key] || []) }; try { localStorage.setItem(ROOM_STORAGE_KEY, JSON.stringify(next)); } catch {} return next; }); };
-
-  const persistConversation = async (message: ChatMessage, role: 'user' | 'assistant') => {
-    try {
-      await fetch(apiUrl('/api/persistence/conversations'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Owner-Id': 'personal-owner' },
-        body: JSON.stringify({
-          sessionId: roomKey,
-          role,
-          agentId: role === 'assistant' ? (message.agentId || selectedAgent.id) : null,
-          content: message.text,
-          projectId: null,
-          taskId: null,
-        }),
-      });
-    } catch (error) {
-      console.warn('Conversation persistence unavailable; local chat history remains available.', error);
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadPersistentHistory = async () => {
-      try {
-        const response = await fetch(`${apiUrl('/api/persistence/conversations')}?sessionId=${encodeURIComponent(roomKey)}&limit=200`, { headers: { 'X-Owner-Id': 'personal-owner' } });
-        if (!response.ok) return;
-        const data = await response.json();
-        const dbMessages: ChatMessage[] = Array.isArray(data.messages) ? data.messages.map(dbRowToMessage) : [];
-        if (cancelled) return;
-        const localMessages = readRooms()[roomKey] || [];
-        const dbKeys = new Set(dbMessages.map(m => conversationKey(m.sender === 'user' ? 'user' : 'assistant', m.text, m.agentId)));
-        const localUnsynced = localMessages.filter(m => !dbKeys.has(conversationKey(m.sender === 'user' ? 'user' : 'assistant', m.text, m.agentId)));
-        const merged = [...dbMessages, ...localUnsynced];
-        appendRoomMessages(roomKey, () => merged);
-        if (dbMessages.length === 0 && localMessages.length > 0) {
-          await Promise.all(localMessages.map(message => persistConversation(message, message.sender === 'user' ? 'user' : 'assistant')));
-        }
-      } catch (error) {
-        console.warn('Failed to load persistent conversation history; using local history.', error);
-      }
-    };
-    loadPersistentHistory();
-    return () => { cancelled = true; };
-  }, [roomKey]);
-
-  const applyActions = (actions: any[]) => {
-    const ids: string[] = [];
-    actions.forEach(action => {
-      const domain = action.domain === 'study' ? 'study' : 'work';
-      if (action.action === 'create' && action.task) {
-        if (domain === 'study') onAddStudyTask({ ...action.task, source: 'user', createdBy: 'user' });
-        else onAddWorkTask({ ...action.task, source: 'user', createdBy: 'user' });
-        ids.push(String(action.task.id));
-        return;
-      }
-      const source = domain === 'study' ? studyTasks.find(t => t.id === action.taskId) : workTasks.find(t => t.id === action.taskId);
-      if (!source) return;
-      const next: any = { ...source, ...(action.updates || {}), source: source.source, createdBy: source.createdBy };
-      domain === 'study' ? onUpdateStudyTask(next as StudyTask) : onUpdateWorkTask(next as WorkTask);
-      ids.push(String(action.taskId));
-    });
-    return ids;
-  };
-
-  const verifyLocalPersistence = (key: string, messageId: string, taskIds: string[], actions: any[]) => {
-    window.setTimeout(() => {
-      try {
-        const work: WorkTask[] = JSON.parse(localStorage.getItem('ait_work_tasks_v2') || '[]');
-        const study: StudyTask[] = JSON.parse(localStorage.getItem('ait_study_tasks_v2') || '[]');
-        const all: any[] = [...work, ...study];
-        const verified = taskIds.length > 0 && taskIds.every(id => {
-          const saved = all.find(t => t.id === id);
-          const action = actions.find(a => String(a.taskId || a.task?.id) === id);
-          if (!saved || !action) return false;
-          const expected = action.action === 'create' ? action.task : action.updates;
-          return Object.entries(expected || {}).every(([k, v]) => JSON.stringify(saved[k]) === JSON.stringify(v));
-        });
-        appendRoomMessages(key, prev => prev.map(m => {
-          if (m.id !== messageId) return m;
-          const logs = [...(m.activityLogs || [])];
-          const i = logs.findIndex(l => l.action === '寫入 Task');
-          if (i >= 0) logs[i] = { ...logs[i], status: verified ? 'completed' : 'warning', summary: verified ? `已驗證 ${taskIds.length} 筆 Task 已寫入共享資料狀態。` : 'AI 已提出操作，但目前無法驗證持久化結果。', detail: verified ? '驗證來源：localStorage（AppDataContext）。' : '請重新整理頁面確認。' };
-          return { ...m, executionVerified: verified, activityLogs: logs };
-        }));
-      } catch (e) { console.error('Agent execution verification failed:', e); }
-    }, 120);
-  };
-
-  const buildActivityLogs = (data: any, prompt: string, appliedIds: string[]): AgentActivityLog[] => {
-    const r = data?.routing; if (!r) return [];
-    const logs: AgentActivityLog[] = [{ id: `act-${Date.now()}-1`, timestamp: new Date().toISOString(), stepIndex: 1, fromAgent: 'manager', toAgent: 'manager', action: 'Manager 分析需求並分流', summary: r.reason || 'Manager 已完成需求判斷。', detail: `需求：「${prompt}」｜${r.requiresDataWrite ? '可能需要資料寫入' : '唯讀分析或對話'}`, status: 'completed', durationMs: 0 }];
-    const mode = data?.execution?.mode || 'single_agent';
-    if (mode === 'parallel_specialists_then_manager' || r.intent === 'mixed') {
-      ['work','study'].filter(id => (r.delegatedAgents || []).includes(id)).forEach((id, index) => logs.push({ id: `act-${Date.now()}-${index+2}`, timestamp: new Date().toISOString(), stepIndex: index + 2, fromAgent: id as AgentId, toAgent: 'manager', action: `${agentLabel(id)} 執行`, summary: `${agentLabel(id)} 已完成專業分析。`, status: 'completed', durationMs: 0 }));
-      logs.push({ id: `act-${Date.now()}-4`, timestamp: new Date().toISOString(), stepIndex: 4, fromAgent: 'manager', action: 'Manager 整合專業 Agent 結果', summary: 'Manager 已整合專業 Agent 結果。', status: 'completed', durationMs: 0 });
-    }
-    if (Array.isArray(data.actions) && data.actions.length) logs.push({ id: `act-${Date.now()}-write`, timestamp: new Date().toISOString(), stepIndex: logs.length + 1, fromAgent: (data.agentId || 'manager') as AgentId, action: '寫入 Task', summary: appliedIds.length ? `已套用 ${appliedIds.length} 筆 Task，正在驗證。` : 'AI 提出 Task 操作，但未執行。', detail: appliedIds.join('、'), status: appliedIds.length ? 'running' : 'warning', durationMs: 0 });
-    return logs;
-  };
-
-  const handleDirectSend = async (text: string) => {
-    const prompt = text.trim(); if (!prompt || directLoading) return;
-    const key = roomKey; const roomHistory = roomMessages[key] || [];
-    const userMessage: ChatMessage = { id: `direct-user-${Date.now()}`, sender: 'user', text: prompt, timestamp: new Date().toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit', hour12:false }) };
-    const history = [...messages, ...roomHistory, userMessage]; appendRoomMessages(key, prev => [...prev, userMessage]); setDirectLoading(true);
-    void persistConversation(userMessage, 'user');
-    try {
-      const response = await fetch(apiUrl('/api/agent/direct/chat'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message:prompt, agentId:selectedAgent.id, agentName:selectedAgent.name, agentRole:selectedAgent.role, history, context:{ workProjects, workTasks, studySubjects, studyTasks, selectedTaskIds, currentContext:{ workspaceId:selectedAgent.id === 'study' ? 'study' : selectedAgent.id === 'work' ? 'work' : 'manager', chatRoomId } } }) });
-      if (!response.ok) { const detail = await response.json().catch(() => ({})); throw new Error(`Direct agent chat returned ${response.status}: ${detail.error || ''}`); }
-      const data = await response.json();
-      const appliedIds = Array.isArray(data.actions) ? applyActions(data.actions) : [];
-      const activityLogs = buildActivityLogs(data, prompt, appliedIds); const messageId = `direct-agent-${Date.now()}`;
-      if (appliedIds.length) { setSelectedTaskIds(p => p.filter(id => !appliedIds.includes(id))); confetti({ particleCount: 30, spread: 55, origin: { y: .85 } }); }
-      const agentMessage: ChatMessage = { id:messageId, sender:'agent', agentId:data.agentId || selectedAgent.id, agentName:data.agentName || selectedAgent.name, agentRole:data.agentRole || selectedAgent.role, text:data.text || data.reply || '我有收到，你可以繼續說。', timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false}), delegatedAgents:data.routing?.delegatedAgents || [], activityLogs, executionAudit:data.executionAudit, executionVerified:appliedIds.length ? false : undefined };
-      appendRoomMessages(key, prev => [...prev, agentMessage]);
-      void persistConversation(agentMessage, 'assistant');
-      if (appliedIds.length) verifyLocalPersistence(key, messageId, appliedIds, data.actions);
-    } catch (error: any) {
-      console.error('Direct employee chat failed:', error);
-      const errorMessage: ChatMessage = { id:`direct-error-${Date.now()}`, sender:'agent', agentId:selectedAgent.id, agentName:selectedAgent.name, agentRole:selectedAgent.role, text:`目前 AI 員工執行失敗：${error?.message || '未知錯誤'}。`, timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false}) };
-      appendRoomMessages(key, prev => [...prev, errorMessage]);
-      void persistConversation(errorMessage, 'assistant');
-    } finally { setDirectLoading(false); }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (!inputText.trim() || busy) return; const text=inputText.trim(); setInputText(''); if (/\\b(安排|排程|排定|規劃).{0,20}(今天|明天|時間|時段)/i.test(text) && selectedAgent.id === 'manager') onSendMessage(text); else handleDirectSend(text); };
-  const handleCopy = (id:string,text:string) => { navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000); };
-
-  return <div className="flex flex-col h-full w-full px-2 sm:px-4 py-3">
-    <div className="mb-3 px-4 py-3 bg-white rounded-xl border border-[#E5E2DC] shadow-xs shrink-0">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><div className="p-1.5 rounded-lg bg-[#E8EFEB] text-[#385244]">{selectedAgent.icon}</div><div><div className="text-sm font-bold">{selectedAgent.name}</div><div className="text-[10px] text-[#8C938D]">{selectedAgent.role}</div></div></div><select value={selectedAgent.id} onChange={e=>setDirectAgentId(e.target.value)} className="px-3 py-2 rounded-lg border border-[#E1DDD4] bg-white text-xs">{selectableAgents.map(a=><option key={a.id} value={a.id}>{a.name} · {a.role}</option>)}</select></div>
-      {selectedAgent.id === 'manager' && <div className="mt-2 text-[10px] text-[#6D756F] flex items-center gap-1"><ShieldCheck className="w-3 h-3"/> Manager 會先判斷需求，再交給 Work / Study Agent 處理。</div>}
-    </div>
-    <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-4">
-      {displayMessages.map(msg=>{ const isUser=msg.sender==='user'; const open=expandedActivities[msg.id] ?? false; return <div key={msg.id} className={`flex flex-col ${isUser?'items-end':'items-start'}`}><div className={`max-w-[95%] sm:max-w-[88%] rounded-2xl p-4 sm:p-5 shadow-xs ${isUser?'bg-[#385244] text-white rounded-tr-none':'bg-white border border-[#E5E2DC] text-[#2D322E]'}`}><div className={`flex items-center justify-between gap-3 pb-2 mb-2 border-b ${isUser?'border-[#4E6B56]':'border-[#EBE8E1]'}`}><div className="flex items-center gap-2"><div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isUser?'bg-[#2B4035] text-white':'bg-[#E8EFEB] text-[#385244]'}`}>{isUser?<User className="w-4 h-4"/>:<Bot className="w-4 h-4"/>}</div><div><div className="text-xs font-bold">{isUser?'你':(msg.agentName||'AI 員工')}</div><div className={`text-[9px] ${isUser?'text-white/70':'text-[#8C938D]'}`}>{msg.timestamp}</div></div></div>{!isUser&&<button onClick={()=>handleCopy(msg.id,msg.text)} className="p-1.5 rounded hover:bg-[#F3F1ED]">{copiedId===msg.id?<Check className="w-3.5 h-3.5"/>:<Copy className="w-3.5 h-3.5"/>}</button>}</div><div className="prose prose-sm max-w-none"><ReactMarkdown>{msg.text}</ReactMarkdown></div>{!isUser&&msg.executionAudit&&<div className="mt-3 rounded-lg bg-[#F7F6F2] border border-[#E6E2D9] p-2.5 text-[10px] text-[#66706A]"><div className="font-semibold flex items-center gap-1"><ShieldCheck className="w-3 h-3"/>執行稽核</div><div className="mt-1">{auditSummary(msg.executionAudit)}</div></div>}{!isUser&&msg.activityLogs&&msg.activityLogs.length>0&&<div className="mt-3"><button onClick={()=>setExpandedActivities(p=>({...p,[msg.id]:!open}))} className="w-full text-left px-3 py-2 rounded-lg border border-[#E5E1D9] bg-[#FAF9F6] text-[10px] text-[#59615C]">Agent 協作執行流程（{msg.activityLogs.length} 步驟） <span className="float-right">{open?'收起':'展開'}</span></button>{open&&<div className="mt-2 space-y-1.5">{msg.activityLogs.map(log=><div key={log.id} className="px-3 py-2 rounded-lg bg-white border border-[#ECE8E0] text-[10px]"><div className="font-semibold">{log.stepIndex}. {log.action}</div><div className="text-[#6E766F]">{log.summary}</div>{log.detail&&<div className="text-[#929892] mt-0.5">{log.detail}</div>}</div>)}</div>}</div>}</div></div>; })}
-      {busy&&<div className="text-xs text-[#7A827C] px-3 py-2 flex items-center gap-2"><span className="animate-pulse">●</span> AI 員工正在處理…</div>}
-      <div ref={messagesEndRef}/>
-    </div>
-    <form onSubmit={handleSubmit} className="mt-3 flex gap-2"><input value={inputText} onChange={e=>setInputText(e.target.value)} placeholder="告訴 Manager 或專業 Agent 你要做什麼…" disabled={busy} className="flex-1 px-4 py-3 rounded-xl border border-[#DEDAD1] bg-white text-sm outline-none focus:ring-2 focus:ring-[#385244]/20"/><button type="submit" disabled={busy||!inputText.trim()} className="px-4 rounded-xl bg-[#385244] text-white disabled:opacity-40 flex items-center gap-1.5"><Send className="w-4 h-4"/>送出</button></form>
-    <div className="mt-2 text-[9px] text-[#9A9F9B] flex items-center gap-1"><PlusCircle className="w-3 h-3"/>新增／建立任務的 AI 指令現在會實際寫入工作或課業資料。</div>
-  </div>;
+  const persistConversation = async (message: ChatMessage, role: 'user' | 'assistant') => { const response = await fetch(apiUrl('/api/persistence/conversations'), { method:'POST', headers:{'Content-Type':'application/json','X-Owner-Id':'personal-owner'}, body:JSON.stringify({ sessionId:roomKey, role, agentId:role === 'assistant' ? (message.agentId || selectedAgent.id) : null, content:message.text, projectId:null, taskId:null }) }); if (!response.ok) throw new Error(`Conversation persistence returned ${response.status}`); return response.json(); };
+  useEffect(() => { let cancelled=false; const loadPersistentHistory=async()=>{ try { const response=await fetch(`${apiUrl('/api/persistence/conversations')}?sessionId=${encodeURIComponent(roomKey)}&limit=200`,{headers:{'X-Owner-Id':'personal-owner'}}); if(!response.ok) return; const data=await response.json(); const dbMessages:ChatMessage[]=Array.isArray(data.messages)?data.messages.map(dbRowToMessage):[]; if(cancelled)return; const localMessages=readRooms()[roomKey]||[]; const dbKeys=new Set(dbMessages.map(m=>conversationKey(m.sender==='user'?'user':'assistant',m.text,m.agentId))); const localUnsynced=localMessages.filter(m=>!dbKeys.has(conversationKey(m.sender==='user'?'user':'assistant',m.text,m.agentId))); appendRoomMessages(roomKey,()=>[...dbMessages,...localUnsynced]); if(localUnsynced.length){ await Promise.all(localUnsynced.map(message=>persistConversation(message,message.sender==='user'?'user':'assistant').catch(error=>console.warn('Failed to migrate local conversation message.',error))); } } catch(error){ console.warn('Failed to load persistent conversation history; using local history.',error); } }; loadPersistentHistory(); return()=>{cancelled=true;}; },[roomKey]);
+  const applyActions=(actions:any[])=>{const ids:string[]=[];actions.forEach(action=>{const domain=action.domain==='study'?'study':'work';if(action.action==='create'&&action.task){if(domain==='study')onAddStudyTask({...action.task,source:'user',createdBy:'user'});else onAddWorkTask({...action.task,source:'user',createdBy:'user'});ids.push(String(action.task.id));return;}const source=domain==='study'?studyTasks.find(t=>t.id===action.taskId):workTasks.find(t=>t.id===action.taskId);if(!source)return;const next:any={...source,...(action.updates||{}),source:source.source,createdBy:source.createdBy};domain==='study'?onUpdateStudyTask(next as StudyTask):onUpdateWorkTask(next as WorkTask);ids.push(String(action.taskId));});return ids;};
+  const verifyLocalPersistence=(key:string,messageId:string,taskIds:string[],actions:any[])=>{window.setTimeout(()=>{try{const work:WorkTask[]=JSON.parse(localStorage.getItem('ait_work_tasks_v2')||'[]');const study:StudyTask[]=JSON.parse(localStorage.getItem('ait_study_tasks_v2')||'[]');const all:any[]=[...work,...study];const verified=taskIds.length>0&&taskIds.every(id=>{const saved=all.find(t=>t.id===id);const action=actions.find(a=>String(a.taskId||a.task?.id)===id);if(!saved||!action)return false;const expected=action.action==='create'?action.task:action.updates;return Object.entries(expected||{}).every(([k,v])=>JSON.stringify(saved[k])===JSON.stringify(v));});appendRoomMessages(key,prev=>prev.map(m=>{if(m.id!==messageId)return m;const logs=[...(m.activityLogs||[])];const i=logs.findIndex(l=>l.action==='寫入 Task');if(i>=0)logs[i]={...logs[i],status:verified?'completed':'warning',summary:verified?`已驗證 ${taskIds.length} 筆 Task 已寫入共享資料狀態。`:'AI 已提出操作，但目前無法驗證持久化結果。',detail:verified?'驗證來源：localStorage（AppDataContext）。':'請重新整理頁面確認。'};return{...m,executionVerified:verified,activityLogs:logs};}));}catch(e){console.error('Agent execution verification failed:',e);}},120);};
+  const buildActivityLogs=(data:any,prompt:string,appliedIds:string[]):AgentActivityLog[]=>{const r=data?.routing;if(!r)return[];const logs:AgentActivityLog[]=[{id:`act-${Date.now()}-1`,timestamp:new Date().toISOString(),stepIndex:1,fromAgent:'manager',toAgent:'manager',action:'Manager 分析需求並分流',summary:r.reason||'Manager 已完成需求判斷。',detail:`需求：「${prompt}」｜${r.requiresDataWrite?'可能需要資料寫入':'唯讀分析或對話'}`,status:'completed',durationMs:0}];const mode=data?.execution?.mode||'single_agent';if(mode==='parallel_specialists_then_manager'||r.intent==='mixed'){['work','study'].filter(id=>(r.delegatedAgents||[]).includes(id)).forEach((id,index)=>logs.push({id:`act-${Date.now()}-${index+2}`,timestamp:new Date().toISOString(),stepIndex:index+2,fromAgent:id as AgentId,toAgent:'manager',action:`${agentLabel(id)} 執行`,summary:`${agentLabel(id)} 已完成專業分析。`,status:'completed',durationMs:0}));logs.push({id:`act-${Date.now()}-4`,timestamp:new Date().toISOString(),stepIndex:4,fromAgent:'manager',action:'Manager 整合專業 Agent 結果',summary:'Manager 已整合專業 Agent 結果。',status:'completed',durationMs:0});}if(Array.isArray(data.actions)&&data.actions.length)logs.push({id:`act-${Date.now()}-write`,timestamp:new Date().toISOString(),stepIndex:logs.length+1,fromAgent:(data.agentId||'manager') as AgentId,action:'寫入 Task',summary:appliedIds.length?`已套用 ${appliedIds.length} 筆 Task，正在驗證。`:'AI 提出 Task 操作，但未執行。',detail:appliedIds.join('、'),status:appliedIds.length?'running':'warning',durationMs:0});return logs;};
+  const handleDirectSend=async(text:string)=>{const prompt=text.trim();if(!prompt||directLoading)return;const key=roomKey;const roomHistory=roomMessages[key]||[];const userMessage:ChatMessage={id:`direct-user-${Date.now()}`,sender:'user',text:prompt,timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false})};const history=[...messages,...roomHistory,userMessage];appendRoomMessages(key,prev=>[...prev,userMessage]);setDirectLoading(true);try{await persistConversation(userMessage,'user');}catch(error){console.warn('User conversation persistence failed; continuing with local chat.',error);}try{const response=await fetch(apiUrl('/api/agent/direct/chat'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:prompt,agentId:selectedAgent.id,agentName:selectedAgent.name,agentRole:selectedAgent.role,history,context:{workProjects,workTasks,studySubjects,studyTasks,selectedTaskIds,currentContext:{workspaceId:selectedAgent.id==='study'?'study':selectedAgent.id==='work'?'work':'manager',chatRoomId}}})});if(!response.ok){const detail=await response.json().catch(()=>({}));throw new Error(`Direct agent chat returned ${response.status}: ${detail.error||''}`);}const data=await response.json();const appliedIds=Array.isArray(data.actions)?applyActions(data.actions):[];const activityLogs=buildActivityLogs(data,prompt,appliedIds);const messageId=`direct-agent-${Date.now()}`;if(appliedIds.length){setSelectedTaskIds(p=>p.filter(id=>!appliedIds.includes(id)));confetti({particleCount:30,spread:55,origin:{y:.85}});}const agentMessage:ChatMessage={id:messageId,sender:'agent',agentId:data.agentId||selectedAgent.id,agentName:data.agentName||selectedAgent.name,agentRole:data.agentRole||selectedAgent.role,text:data.text||data.reply||'我有收到，你可以繼續說。',timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false}),delegatedAgents:data.routing?.delegatedAgents||[],activityLogs,executionAudit:data.executionAudit,executionVerified:appliedIds.length?false:undefined};appendRoomMessages(key,prev=>[...prev,agentMessage]);try{await persistConversation(agentMessage,'assistant');}catch(error){console.warn('Agent conversation persistence failed; local chat remains available.',error);}if(appliedIds.length)verifyLocalPersistence(key,messageId,appliedIds,data.actions);}catch(error:any){console.error('Direct employee chat failed:',error);const errorMessage:ChatMessage={id:`direct-error-${Date.now()}`,sender:'agent',agentId:selectedAgent.id,agentName:selectedAgent.name,agentRole:selectedAgent.role,text:`目前 AI 員工執行失敗：${error?.message||'未知錯誤'}。`,timestamp:new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false})};appendRoomMessages(key,prev=>[...prev,errorMessage]);try{await persistConversation(errorMessage,'assistant');}catch(persistError){console.warn('Error conversation persistence failed.',persistError);}}finally{setDirectLoading(false);}};
+  const handleSubmit=(e:React.FormEvent)=>{e.preventDefault();if(!inputText.trim()||busy)return;const text=inputText.trim();setInputText('');if(/\b(安排|排程|排定|規劃).{0,20}(今天|明天|時間|時段)/i.test(text)&&selectedAgent.id==='manager')onSendMessage(text);else handleDirectSend(text);};
+  const handleCopy=(id:string,text:string)=>{navigator.clipboard.writeText(text);setCopiedId(id);setTimeout(()=>setCopiedId(null),2000);};
+  return <div className="flex flex-col h-full w-full px-2 sm:px-4 py-3"><div className="mb-3 px-4 py-3 bg-white rounded-xl border border-[#E5E2DC] shadow-xs shrink-0"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><div className="p-1.5 rounded-lg bg-[#E8EFEB] text-[#385244]">{selectedAgent.icon}</div><div><div className="text-sm font-bold">{selectedAgent.name}</div><div className="text-[10px] text-[#8C938D]">{selectedAgent.role}</div></div></div><select value={selectedAgent.id} onChange={e=>setDirectAgentId(e.target.value)} className="px-3 py-2 rounded-lg border border-[#E1DDD4] bg-white text-xs">{selectableAgents.map(a=><option key={a.id} value={a.id}>{a.name} · {a.role}</option>)}</select></div>{selectedAgent.id==='manager'&&<div className="mt-2 text-[10px] text-[#6D756F] flex items-center gap-1"><ShieldCheck className="w-3 h-3"/> Manager 會先判斷需求，再交給 Work / Study Agent 處理。</div>}</div><div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-4">{displayMessages.map(msg=>{const isUser=msg.sender==='user';const open=expandedActivities[msg.id]??false;return <div key={msg.id} className={`flex flex-col ${isUser?'items-end':'items-start'}`}><div className={`max-w-[95%] sm:max-w-[88%] rounded-2xl p-4 sm:p-5 shadow-xs ${isUser?'bg-[#385244] text-white rounded-tr-none':'bg-white border border-[#E5E2DC] text-[#2D322E]'}`}><div className={`flex items-center justify-between gap-3 pb-2 mb-2 border-b ${isUser?'border-[#4E6B56]':'border-[#EBE8E1]'}`}><div className="flex items-center gap-2"><div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isUser?'bg-[#2B4035] text-white':'bg-[#E8EFEB] text-[#385244]'}`}>{isUser?<User className="w-4 h-4"/>:<Bot className="w-4 h-4"/>}</div><div><div className="text-xs font-bold">{isUser?'你':(msg.agentName||'AI 員工')}</div><div className={`text-[9px] ${isUser?'text-white/70':'text-[#8C938D]'}`}>{msg.timestamp}</div></div></div>{!isUser&&<button onClick={()=>handleCopy(msg.id,msg.text)} className="p-1.5 rounded hover:bg-[#F3F1ED]">{copiedId===msg.id?<Check className="w-3.5 h-3.5"/>:<Copy className="w-3.5 h-3.5"/>}</button>}</div><div className="prose prose-sm max-w-none"><ReactMarkdown>{msg.text}</ReactMarkdown></div>{!isUser&&msg.executionAudit&&<div className="mt-3 rounded-lg bg-[#F7F6F2] border border-[#E6E2D9] p-2.5 text-[10px] text-[#66706A]"><div className="font-semibold flex items-center gap-1"><ShieldCheck className="w-3 h-3"/>執行稽核</div><div className="mt-1">{auditSummary(msg.executionAudit)}</div></div>}{!isUser&&msg.activityLogs&&msg.activityLogs.length>0&&<div className="mt-3"><button onClick={()=>setExpandedActivities(p=>({...p,[msg.id]:!open}))} className="w-full text-left px-3 py-2 rounded-lg border border-[#E5E1D9] bg-[#FAF9F6] text-[10px] text-[#59615C]">Agent 協作執行流程（{msg.activityLogs.length} 步驟） <span className="float-right">{open?'收起':'展開'}</span></button>{open&&<div className="mt-2 space-y-1.5">{msg.activityLogs.map(log=><div key={log.id} className="px-3 py-2 rounded-lg bg-white border border-[#ECE8E0] text-[10px]"><div className="font-semibold">{log.stepIndex}. {log.action}</div><div className="text-[#6E766F]">{log.summary}</div>{log.detail&&<div className="text-[#929892] mt-0.5">{log.detail}</div>}</div>)}</div>}</div>}</div></div>})}<div ref={messagesEndRef}/></div><form onSubmit={handleSubmit} className="mt-3 flex gap-2"><input value={inputText} onChange={e=>setInputText(e.target.value)} placeholder="告訴 Manager 或專業 Agent 你要做什麼…" disabled={busy} className="flex-1 px-4 py-3 rounded-xl border border-[#DEDAD1] bg-white text-sm outline-none focus:ring-2 focus:ring-[#385244]/20"/><button type="submit" disabled={busy||!inputText.trim()} className="px-4 rounded-xl bg-[#385244] text-white disabled:opacity-40 flex items-center gap-1.5"><Send className="w-4 h-4"/>送出</button></form><div className="mt-2 text-[9px] text-[#9A9F9B] flex items-center gap-1"><PlusCircle className="w-3 h-3"/>新增／建立任務的 AI 指令現在會實際寫入工作或課業資料。</div></div>;
 };
