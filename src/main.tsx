@@ -54,11 +54,14 @@ Promise.all([
     const ResearchTaskBridge = bridgeModule.ResearchTaskBridge;
     root.render(
       <React.StrictMode>
-        <AppErrorBoundary>
-          <div data-ait-app="true" className="min-h-screen">
-            <App />
-          </div>
-        </AppErrorBoundary>
+        <>
+          <AppErrorBoundary>
+            <div data-ait-app="true" className="min-h-screen">
+              <App />
+            </div>
+          </AppErrorBoundary>
+          <ResearchTaskBridge />
+        </>
       </React.StrictMode>,
     );
   })
