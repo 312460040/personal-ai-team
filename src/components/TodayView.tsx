@@ -1,414 +1,51 @@
-import React, { useState } from 'react';
-import {
-  CalendarDays,
-  Briefcase,
-  GraduationCap,
-  Coffee,
-  CheckCircle2,
-  Clock,
-  Sparkles,
-  Plus,
-  Flame,
-  Check,
-  Zap,
-  Bot,
-  AlertCircle,
-  BarChart3,
-  CalendarCheck2,
-} from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { CalendarDays, Briefcase, GraduationCap, CheckCircle2, Clock, Sparkles, Plus, Flame, Check, Bot, Target, ListChecks, Trophy, Trash2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TodayTimeBlock, AgentId } from '../types';
 
-interface TodayViewProps {
-  blocks: TodayTimeBlock[];
-  onToggleBlock: (blockId: string) => void;
-  onAddBlock: (block: Omit<TodayTimeBlock, 'id'>) => void;
-  onAskManagerToReschedule: () => void;
-}
+interface TodayViewProps { blocks: TodayTimeBlock[]; onToggleBlock: (blockId: string) => void; onAddBlock: (block: Omit<TodayTimeBlock, 'id'>) => void; onAskManagerToReschedule: () => void; }
+type Habit = { id: string; name: string; description: string; time: string; icon: string; frequency: string };
+type ExtraTask = { id: string; title: string; completed: boolean };
+const HABIT_KEY='ait_personal_habits_v2', CHECKIN_KEY='ait_personal_checkins_v2', EXTRA_KEY='ait_personal_extra_tasks_v1';
+const todayKey=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Taipei'});
+const defaultHabits:Habit[]=[{id:'water',name:'喝水',description:'每天 8 杯水',time:'08:30',icon:'💧',frequency:'每日'},{id:'exercise',name:'運動 30 分鐘',description:'每週 3 次',time:'19:00',icon:'🏃',frequency:'每週 3 次'},{id:'reading',name:'閱讀',description:'每天 30 分鐘',time:'22:00',icon:'📖',frequency:'每日'},{id:'sleep',name:'早睡',description:'晚上 11 點前',time:'23:00',icon:'🌙',frequency:'每日'}];
+function read<T>(key:string,fallback:T):T{try{const v=localStorage.getItem(key);return v?JSON.parse(v):fallback;}catch{return fallback;}}
+function write(key:string,value:unknown){try{localStorage.setItem(key,JSON.stringify(value));}catch{}}
+function dateKey(d:Date){return d.toLocaleDateString('en-CA',{timeZone:'Asia/Taipei'});}
+function weekDays(){const now=new Date(),day=now.getDay(),start=new Date(now);start.setDate(now.getDate()-day);return Array.from({length:7},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d;});}
 
-export const TodayView: React.FC<TodayViewProps> = ({
-  blocks,
-  onToggleBlock,
-  onAddBlock,
-  onAskManagerToReschedule,
-}) => {
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newTimeRange, setNewTimeRange] = useState('16:30 - 17:30');
-  const [newType, setNewType] = useState<'work' | 'study' | 'rest' | 'buffer'>('work');
-  const [newTitle, setNewTitle] = useState('');
-  const [newNotes, setNewNotes] = useState('');
-  const [newDurationMin, setNewDurationMin] = useState(60);
-
-  const handleToggle = (id: string) => {
-    onToggleBlock(id);
-    const target = blocks.find((b) => b.id === id);
-    if (target && !target.completed) {
-      confetti({
-        particleCount: 40,
-        spread: 50,
-        origin: { y: 0.8 },
-      });
-    }
-  };
-
-  const handleCreateBlock = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    const agentOwner =
-      newType === 'work' ? 'work' : newType === 'study' ? 'study' : 'manager';
-
-    onAddBlock({
-      timeRange: newTimeRange,
-      type: newType,
-      title: newTitle.trim(),
-      agentOwner: agentOwner as AgentId,
-      targetDurationMin: Number(newDurationMin) || 60,
-      completed: false,
-      notes: newNotes.trim() || undefined,
-      source: 'user',
-      createdBy: 'user',
-    });
-
-    setNewTitle('');
-    setNewNotes('');
-    setShowAddModal(false);
-  };
-
-  // Calculate totals
-  const totalWorkMin = blocks
-    .filter((b) => b.type === 'work')
-    .reduce((acc, b) => acc + b.targetDurationMin, 0);
-
-  const totalStudyMin = blocks
-    .filter((b) => b.type === 'study')
-    .reduce((acc, b) => acc + b.targetDurationMin, 0);
-
-  const totalRestMin = blocks
-    .filter((b) => b.type === 'rest' || b.type === 'buffer')
-    .reduce((acc, b) => acc + b.targetDurationMin, 0);
-
-  const totalMin = totalWorkMin + totalStudyMin + totalRestMin || 1;
-  const completedCount = blocks.filter((b) => b.completed).length;
-  const progressPercent = Math.round((completedCount / (blocks.length || 1)) * 100);
-
-  return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* Header Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-[#FFFFFF] border border-[#E5E2DC] shadow-xs">
-        <div>
-          <div className="flex items-center space-x-2 mb-1">
-            <span className="p-1.5 rounded-lg bg-[#E8EFEB] text-[#385244]">
-              <CalendarDays className="w-5 h-5" />
-            </span>
-            <h2 className="text-lg font-bold text-[#2D322E]">Today 工作與課業整合儀表板</h2>
-            <span className="px-2 py-0.5 rounded-full text-xs font-mono bg-[#E8EFEB] text-[#2D4835] border border-[#BCD2C3]">
-              Manager Agent 整合仲裁
-            </span>
-          </div>
-          <p className="text-xs sm:text-sm text-[#6B726C]">
-            Manager Agent 已將 Work Agent 與 Study Agent 的建議無縫整合，兼顧白天高產出與晚間高專注學習。
-          </p>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          <button
-            id="btn-rebalance-schedule"
-            onClick={onAskManagerToReschedule}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#EFECE5] hover:bg-[#E4DFD6] text-[#385244] border border-[#DDD8CE] text-xs font-semibold transition-colors"
-          >
-            <Sparkles className="w-4 h-4 text-[#4E6B56]" />
-            <span>向總管請求重新排程</span>
-          </button>
-
-          <button
-            id="btn-add-today-block"
-            onClick={() => setShowAddModal(true)}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#385244] hover:bg-[#2B4035] text-white text-xs font-semibold transition-colors shadow-xs"
-          >
-            <Plus className="w-4 h-4" />
-            <span>新增時間區塊</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Daily Executive Briefing & Gauge */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Manager Daily Briefing */}
-        <div className="md:col-span-2 p-5 rounded-2xl bg-[#FFFFFF] border border-[#BCD2C3] shadow-xs">
-          <div className="flex items-center space-x-2 mb-2">
-            <Bot className="w-4 h-4 text-[#385244]" />
-            <span className="text-xs font-bold text-[#385244] uppercase tracking-wider font-mono">
-              Manager Agent 今日統籌簡報 (Executive Briefing)
-            </span>
-          </div>
-          <p className="text-xs sm:text-sm text-[#2D322E] leading-relaxed font-sans mb-3">
-            「今日核心主軸為<strong>【日間攻克電商單元測試】</strong>與<strong>【夜間深度攻堅資料結構圖論】</strong>。已將工作與課業時段完全錯開，傍晚安排 1.5 小時晚餐與腦力轉換緩衝，切忌在晚間學習時處理工作通訊！」
-          </p>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="px-2 py-0.5 rounded bg-[#EBF1EC] text-[#2D4835] border border-[#C6DAC9] font-mono font-medium">
-              💼 工作: {(totalWorkMin / 60).toFixed(1)}h
-            </span>
-            <span className="px-2 py-0.5 rounded bg-[#FAF0E6] text-[#7D3E1B] border border-[#ECD1BA] font-mono font-medium">
-              🎓 課業: {(totalStudyMin / 60).toFixed(1)}h
-            </span>
-            <span className="px-2 py-0.5 rounded bg-[#EFECE5] text-[#4A504B] border border-[#DDD8CE] font-mono font-medium">
-              🍽️ 休息緩衝: {(totalRestMin / 60).toFixed(1)}h
-            </span>
-          </div>
-        </div>
-
-        {/* Completion Progress Gauge */}
-        <div className="p-5 rounded-2xl bg-[#FFFFFF] border border-[#E5E2DC] shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between text-xs text-[#6B726C] font-medium mb-1">
-              <span>今日完成度</span>
-              <span className="text-[#4E6B56] font-bold font-mono">
-                {completedCount} / {blocks.length} 項
-              </span>
-            </div>
-            <div className="text-2xl font-black text-[#2D322E] font-mono">
-              {progressPercent}%
-            </div>
-          </div>
-
-          <div className="my-2">
-            <div className="w-full h-2.5 rounded-full bg-[#EFECE5] overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-[#385244] to-[#5C7C66] rounded-full transition-all duration-500"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Time Ratio Bar */}
-          <div className="space-y-1">
-            <div className="flex justify-between text-[10px] text-[#6B726C] font-mono">
-              <span>工作 : 課業 : 休息</span>
-              <span>
-                {Math.round((totalWorkMin / totalMin) * 100)}% /{' '}
-                {Math.round((totalStudyMin / totalMin) * 100)}% /{' '}
-                {Math.round((totalRestMin / totalMin) * 100)}%
-              </span>
-            </div>
-            <div className="h-1.5 w-full rounded-full bg-[#EFECE5] flex overflow-hidden">
-              <div
-                className="bg-[#4E6B56]"
-                style={{ width: `${(totalWorkMin / totalMin) * 100}%` }}
-              />
-              <div
-                className="bg-[#B36534]"
-                style={{ width: `${(totalStudyMin / totalMin) * 100}%` }}
-              />
-              <div
-                className="bg-[#9D9689]"
-                style={{ width: `${(totalRestMin / totalMin) * 100}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Integrated Timeline */}
-      <div className="p-5 rounded-2xl bg-[#FFFFFF] border border-[#E5E2DC] shadow-xs">
-        <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#EBE8E1]">
-          <div className="flex items-center space-x-2">
-            <Clock className="w-4 h-4 text-[#385244]" />
-            <h3 className="text-sm font-bold text-[#2D322E]">
-              今日整合時程表 (Integrated Daily Timeline)
-            </h3>
-          </div>
-          <span className="text-xs text-[#6B726C] font-mono">
-            {new Date().toLocaleDateString('zh-TW', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-              weekday: 'long',
-            })}
-          </span>
-        </div>
-
-        <div className="space-y-3">
-          {blocks.map((block) => {
-            const isWork = block.type === 'work';
-            const isStudy = block.type === 'study';
-            const isRest = block.type === 'rest' || block.type === 'buffer';
-
-            return (
-              <div
-                key={block.id}
-                className={`p-4 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-start justify-between gap-3 shadow-2xs ${
-                  block.completed
-                    ? 'bg-[#FAF8F5] border-[#E5E2DC] opacity-60'
-                    : isWork
-                    ? 'bg-[#FFFFFF] border-[#E5E2DC] hover:border-[#4E6B56]/60'
-                    : isStudy
-                    ? 'bg-[#FFFFFF] border-[#E5E2DC] hover:border-[#B36534]/60'
-                    : 'bg-[#FFFFFF] border-[#E5E2DC] hover:border-[#7D7569]/60'
-                }`}
-              >
-                <div className="flex items-start space-x-3.5 flex-1">
-                  <button
-                    onClick={() => handleToggle(block.id)}
-                    className={`mt-0.5 flex items-center justify-center w-5 h-5 rounded-md border transition-colors flex-shrink-0 ${
-                      block.completed
-                        ? 'bg-[#385244] border-[#385244] text-white'
-                        : 'border-[#DDD8CE] hover:border-[#385244] text-transparent'
-                    }`}
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
-
-                  <div className="space-y-1 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#2D322E] bg-[#EFECE5] px-2 py-0.5 rounded">
-                        {block.timeRange}
-                      </span>
-
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${
-                          isWork
-                            ? 'bg-[#EBF1EC] text-[#2D4835] border border-[#C6DAC9]'
-                            : isStudy
-                            ? 'bg-[#FAF0E6] text-[#7D3E1B] border border-[#ECD1BA]'
-                            : 'bg-[#EFECE5] text-[#4A504B] border border-[#DDD8CE]'
-                        }`}
-                      >
-                        {isWork && <Briefcase className="w-3 h-3 mr-1" />}
-                        {isStudy && <GraduationCap className="w-3 h-3 mr-1" />}
-                        {isRest && <Coffee className="w-3 h-3 mr-1" />}
-                        {isWork
-                          ? 'Work Agent'
-                          : isStudy
-                          ? 'Study Agent'
-                          : 'Manager 緩衝'}
-                      </span>
-
-                      <span className="text-xs text-[#6B726C] font-mono">
-                        ({block.targetDurationMin} 分鐘)
-                      </span>
-                    </div>
-
-                    <h4
-                      className={`text-sm font-semibold text-[#2D322E] ${
-                        block.completed ? 'line-through text-[#8C938D]' : ''
-                      }`}
-                    >
-                      {block.title}
-                    </h4>
-
-                    {block.notes && (
-                      <p className="text-xs text-[#4A504B] font-sans leading-relaxed bg-[#FAF8F5] p-2 rounded-lg border border-[#E5E2DC]">
-                        💡 {block.notes}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2 text-xs font-mono text-[#6B726C]">
-                  {block.completed ? (
-                    <span className="text-[#4E6B56] font-bold flex items-center">
-                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> 已完成
-                    </span>
-                  ) : (
-                    <span className="text-[#385244] font-medium">待執行</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Add Time Block Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-          <div className="bg-[#FFFFFF] border border-[#E5E2DC] rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h3 className="text-base font-bold text-[#2D322E] mb-4">新增今日時間區塊</h3>
-            <form onSubmit={handleCreateBlock} className="space-y-4 text-xs">
-              <div>
-                <label className="block text-[#4A504B] font-medium mb-1">時間範圍</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="例如：16:30 - 17:30"
-                  value={newTimeRange}
-                  onChange={(e) => setNewTimeRange(e.target.value)}
-                  className="w-full bg-[#FAF8F5] border border-[#DDD8CE] rounded-xl px-3 py-2 text-sm text-[#2D322E] focus:outline-none focus:border-[#385244]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[#4A504B] font-medium mb-1">任務類型</label>
-                  <select
-                    value={newType}
-                    onChange={(e: any) => setNewType(e.target.value)}
-                    className="w-full bg-[#FAF8F5] border border-[#DDD8CE] rounded-xl px-3 py-2 text-sm text-[#2D322E] focus:outline-none focus:border-[#385244]"
-                  >
-                    <option value="work">工作 (Work Agent)</option>
-                    <option value="study">課業 (Study Agent)</option>
-                    <option value="rest">休息緩衝 (Rest)</option>
-                    <option value="buffer">總管覆盤 (Buffer)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[#4A504B] font-medium mb-1">時長 (分鐘)</label>
-                  <input
-                    type="number"
-                    step="15"
-                    min="15"
-                    max="240"
-                    value={newDurationMin}
-                    onChange={(e) => setNewDurationMin(Number(e.target.value))}
-                    className="w-full bg-[#FAF8F5] border border-[#DDD8CE] rounded-xl px-3 py-2 text-sm text-[#2D322E] focus:outline-none focus:border-[#385244]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[#4A504B] font-medium mb-1">任務標題</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="例如：【Work Agent】撰寫 API 驗證測試"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full bg-[#FAF8F5] border border-[#DDD8CE] rounded-xl px-3 py-2 text-sm text-[#2D322E] focus:outline-none focus:border-[#385244]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[#4A504B] font-medium mb-1">執行重點 / 備註</label>
-                <textarea
-                  rows={2}
-                  value={newNotes}
-                  onChange={(e) => setNewNotes(e.target.value)}
-                  placeholder="例如：高專注深度工作，關閉即時通訊軟體。"
-                  className="w-full bg-[#FAF8F5] border border-[#DDD8CE] rounded-xl px-3 py-2 text-sm text-[#2D322E] focus:outline-none focus:border-[#385244]"
-                />
-              </div>
-
-              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-[#EBE8E1]">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 rounded-xl bg-[#EFECE5] text-[#4A504B] hover:bg-[#E4DFD6] font-medium text-xs transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-[#385244] hover:bg-[#2B4035] text-white font-medium text-xs shadow-xs transition-colors"
-                >
-                  確認建立
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+export const TodayView:React.FC<TodayViewProps>=({blocks,onToggleBlock,onAddBlock,onAskManagerToReschedule})=>{
+ const [habits,setHabits]=useState<Habit[]>(()=>read(HABIT_KEY,defaultHabits));
+ const [checkins,setCheckins]=useState<Record<string,string[]>>(()=>read(CHECKIN_KEY,{}));
+ const [extraTasks,setExtraTasks]=useState<ExtraTask[]>(()=>read(EXTRA_KEY,[]));
+ const [newExtraTask,setNewExtraTask]=useState('');
+ const [showHabitForm,setShowHabitForm]=useState(false);
+ const [newHabit,setNewHabit]=useState({name:'',description:'',time:''});
+ const today=todayKey(), days=useMemo(weekDays,[]);
+ const completedToday=habits.filter(h=>checkins[h.id]?.includes(today)).length;
+ const habitGoal=habits.length, habitPercent=habitGoal?Math.round(completedToday/habitGoal*100):0;
+ const dayGoalReached=(key:string)=>habits.length>0&&habits.every(h=>checkins[h.id]?.includes(key));
+ const toggleCheckin=(habitId:string,key=today)=>setCheckins(prev=>{const next={...prev,[habitId]:[...(prev[habitId]||[])]},i=next[habitId].indexOf(key);if(i>=0)next[habitId].splice(i,1);else next[habitId].push(key);write(CHECKIN_KEY,next);if(i<0&&key===today)confetti({particleCount:35,spread:48,origin:{y:.78}});return next;});
+ const addHabit=(e:React.FormEvent)=>{e.preventDefault();if(!newHabit.name.trim())return;const next=[...habits,{id:`habit-${Date.now()}`,name:newHabit.name.trim(),description:newHabit.description.trim()||'自訂習慣',time:newHabit.time||'自訂',icon:'🌱',frequency:'每日'}];setHabits(next);write(HABIT_KEY,next);setNewHabit({name:'',description:'',time:''});setShowHabitForm(false);};
+ const addExtraTask=(e:React.FormEvent)=>{e.preventDefault();if(!newExtraTask.trim())return;const next=[...extraTasks,{id:`extra-${Date.now()}`,title:newExtraTask.trim(),completed:false}];setExtraTasks(next);write(EXTRA_KEY,next);setNewExtraTask('');};
+ const toggleExtra=(id:string)=>{const next=extraTasks.map(t=>t.id===id?{...t,completed:!t.completed}:t);setExtraTasks(next);write(EXTRA_KEY,next);};
+ const removeExtra=(id:string)=>{const next=extraTasks.filter(t=>t.id!==id);setExtraTasks(next);write(EXTRA_KEY,next);};
+ const workBlocks=blocks.filter(b=>b.type==='work'),studyBlocks=blocks.filter(b=>b.type==='study'),completedBlocks=blocks.filter(b=>b.completed).length,blockPercent=blocks.length?Math.round(completedBlocks/blocks.length*100):0;
+ const createBlock=(type:'work'|'study')=>{const title=window.prompt(type==='work'?'新增工作事項':'新增課業／研究事項');if(!title?.trim())return;onAddBlock({timeRange:'自訂時間',type,title:title.trim(),agentOwner:(type==='work'?'work':'study') as AgentId,targetDurationMin:60,completed:false,source:'user',createdBy:'user'});};
+ let streak=0;for(let i=0;i<30;i++){const d=new Date();d.setDate(d.getDate()-i);if(!dayGoalReached(dateKey(d)))break;streak++;}
+ return <div className="h-full overflow-y-auto bg-[#FBFAF7] custom-scrollbar"><div className="mx-auto max-w-7xl px-5 py-6 lg:px-7 space-y-5">
+  <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4"><div><div className="flex items-center gap-2 text-emerald-700 text-sm font-semibold mb-1"><Sparkles className="w-4 h-4"/>TODAY · 個人每日總覽</div><h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#243229]">早安，今天一起把重要的事做好 ☀️</h2><p className="mt-1 text-sm text-[#7A837D]">{new Intl.DateTimeFormat('zh-TW',{year:'numeric',month:'long',day:'numeric',weekday:'long'}).format(new Date())} · 工作、課業與生活都放在同一個視角。</p></div><button onClick={onAskManagerToReschedule} className="inline-flex items-center gap-2 rounded-xl bg-[#385244] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#2B4035]"><Sparkles className="w-4 h-4"/>請 Manager 重新安排今天</button></header>
+  <section className="grid grid-cols-1 lg:grid-cols-3 gap-4"><DomainCard icon={<Briefcase/>} title="工作 Work" subtitle="Work Agent" tone="green" count={workBlocks.filter(b=>!b.completed).length} total={workBlocks.length} items={workBlocks.slice(0,3).map(b=>b.title)} onAdd={()=>createBlock('work')}/><DomainCard icon={<GraduationCap/>} title="課業／研究 Study" subtitle="Study · Research Agent" tone="orange" count={studyBlocks.filter(b=>!b.completed).length} total={studyBlocks.length} items={studyBlocks.slice(0,3).map(b=>b.title)} onAdd={()=>createBlock('study')}/><DomainCard icon={<Target/>} title="生活 Life" subtitle="Personal Agent" tone="blue" count={completedToday} total={habitGoal} items={habits.slice(0,3).map(h=>`${h.icon} ${h.name}`)} onAdd={()=>setShowHabitForm(true)}/></section>
+  <section className="grid grid-cols-1 xl:grid-cols-[1.35fr_.65fr] gap-5">
+   <div className="rounded-2xl border border-[#E7E2D9] bg-white p-5 shadow-[0_8px_30px_rgba(70,65,55,0.05)]"><div className="flex items-center justify-between mb-4"><div><div className="flex items-center gap-2"><Bot className="w-5 h-5 text-[#536B5A]"/><h3 className="font-bold text-[#29362E]">今日工作／課業</h3></div><p className="text-xs text-[#8A938D] mt-1">工作與課業任務仍由 Manager 與各 Agent 協調。</p></div><span className="text-sm font-bold text-[#4D8B67]">{completedBlocks}/{blocks.length} · {blockPercent}%</span></div><div className="h-2 rounded-full bg-[#EEF0EC] overflow-hidden mb-4"><div className="h-full rounded-full bg-[#4CAF7A] transition-all" style={{width:`${blockPercent}%`}}/></div><div className="space-y-2.5">{blocks.length?blocks.map(b=><div key={b.id} className={`flex items-center gap-3 rounded-xl border px-3 py-3 ${b.completed?'bg-[#F7FBF8] border-[#E2EEE5]':'bg-[#FFFEFC] border-[#ECE7DE]'}`}><button onClick={()=>onToggleBlock(b.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${b.completed?'bg-[#4CAF7A] text-white':'border border-[#D8DED9] text-transparent hover:border-[#4CAF7A]'}`}><Check className="w-4 h-4"/></button><div className="min-w-0 flex-1"><div className={`text-sm font-semibold ${b.completed?'line-through text-[#89928B]':'text-[#344039]'}`}>{b.title}</div><div className="text-xs text-[#929992] mt-0.5">{b.timeRange} · {b.type==='work'?'💼 Work Agent':b.type==='study'?'🎓 Study Agent':'☕ Manager'}</div></div>{b.completed?<CheckCircle2 className="w-4 h-4 text-[#4CAF7A]"/>:<Clock className="w-4 h-4 text-[#A3AAA4]"/>}</div>):<EmptyState text="今天還沒有工作／課業時間區塊"/>}</div></div>
+   <div className="rounded-2xl border border-[#E7E2D9] bg-white p-5 shadow-[0_8px_30px_rgba(70,65,55,0.05)]"><div className="flex items-center justify-between mb-4"><div><div className="flex items-center gap-2"><Flame className="w-5 h-5 text-[#E27D55]"/><h3 className="font-bold text-[#29362E]">Life · 打卡目標</h3></div><p className="text-xs text-[#8A938D] mt-1">只有習慣計入目標完成率。</p></div><div className="text-right"><div className="text-2xl font-black text-[#344039]">{completedToday}/{habitGoal}</div><div className="text-[11px] text-[#8D958F]">{habitPercent}%</div></div></div><div className="h-2 rounded-full bg-[#EEF0EC] overflow-hidden mb-4"><div className="h-full rounded-full bg-[#4CAF7A] transition-all" style={{width:`${habitPercent}%`}}/></div><div className="space-y-2">{habits.map(h=>{const done=checkins[h.id]?.includes(today);return <div key={h.id} className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 ${done?'bg-[#F5FBF7] border-[#DCEBE1]':'bg-white border-[#ECE7DE]'}`}><span className="text-lg">{h.icon}</span><div className="flex-1 min-w-0"><div className={`text-sm font-semibold ${done?'text-[#4A8060]':'text-[#445048]'}`}>{h.name}</div><div className="text-[11px] text-[#929992]">{h.frequency} · {h.time}</div></div><button onClick={()=>toggleCheckin(h.id)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${done?'bg-[#4CAF7A] text-white':'border border-[#E6C0B8] text-[#D86759] hover:bg-[#FFF6F3]'}`}>{done?'已完成':'打卡'}</button></div>})}</div><button onClick={()=>setShowHabitForm(v=>!v)} className="mt-3 w-full rounded-xl border border-dashed border-[#AFCDBA] bg-[#F4FAF6] px-3 py-2.5 text-sm font-bold text-[#43805C]"><Plus className="w-4 h-4 inline mr-1"/>新增打卡習慣</button></div>
+  </section>
+  {showHabitForm&&<form onSubmit={addHabit} className="rounded-2xl border border-[#CFE1D5] bg-[#F7FBF8] p-4 grid grid-cols-1 md:grid-cols-[1fr_1fr_140px_auto] gap-2.5"><input autoFocus value={newHabit.name} onChange={e=>setNewHabit(v=>({...v,name:e.target.value}))} placeholder="習慣名稱，例如：伸展 10 分鐘" className="rounded-xl border border-[#DDE7E0] bg-white px-3 py-2 text-sm outline-none focus:border-[#74A685]"/><input value={newHabit.description} onChange={e=>setNewHabit(v=>({...v,description:e.target.value}))} placeholder="目標說明" className="rounded-xl border border-[#DDE7E0] bg-white px-3 py-2 text-sm outline-none focus:border-[#74A685]"/><input value={newHabit.time} onChange={e=>setNewHabit(v=>({...v,time:e.target.value}))} placeholder="提醒時間" className="rounded-xl border border-[#DDE7E0] bg-white px-3 py-2 text-sm outline-none focus:border-[#74A685]"/><button className="rounded-xl bg-[#4CAF7A] px-4 py-2 text-sm font-bold text-white">建立</button></form>}
+  <section className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5"><div className="rounded-2xl border border-[#E7E2D9] bg-white p-5 shadow-[0_8px_30px_rgba(70,65,55,0.05)]"><div className="flex items-center justify-between mb-4"><div><div className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-[#5A7562]"/><h3 className="font-bold text-[#29362E]">本週打卡清單</h3></div><p className="text-xs text-[#8A938D] mt-1">當天所有習慣目標完成，日期就會變綠色。</p></div><span className="text-xs font-semibold text-[#738078]">今天 {today}</span></div><div className="grid grid-cols-7 gap-2">{days.map(d=>{const key=dateKey(d),reached=dayGoalReached(key),isToday=key===today;return <button key={key} onClick={()=>{}} className={`rounded-xl p-2.5 border text-center ${reached?'bg-[#4CAF7A] border-[#4CAF7A] text-white shadow-sm':isToday?'bg-[#FFF7EA] border-[#E8C999] text-[#7D6240]':'bg-[#FBFAF7] border-[#ECE7DE] text-[#69736C]'}`}><div className="text-[10px] font-semibold">{new Intl.DateTimeFormat('zh-TW',{weekday:'short'}).format(d)}</div><div className="text-lg font-black mt-0.5">{d.getDate()}</div><div className="text-[10px] mt-1">{reached?'✓ 達成':isToday?'今天':'未達成'}</div></button>})}</div><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#F4FAF6] px-3 py-2.5"><div className="text-xs text-[#6F7E73]">今日目標</div><div className="text-lg font-black text-[#43805C]">{completedToday}/{habitGoal}</div></div><div className="rounded-xl bg-[#FFF7EA] px-3 py-2.5"><div className="text-xs text-[#927A59]">連續達標</div><div className="text-lg font-black text-[#765B35]">{streak} 天</div></div></div></div>
+   <div className="rounded-2xl border border-[#E7E2D9] bg-white p-5 shadow-[0_8px_30px_rgba(70,65,55,0.05)]"><div className="flex items-center gap-2 mb-1"><ListChecks className="w-5 h-5 text-[#64736A]"/><h3 className="font-bold text-[#29362E]">額外任務</h3></div><p className="text-xs text-[#8A938D] mb-4">臨時要做的事，不會影響打卡目標。</p><form onSubmit={addExtraTask} className="flex gap-2 mb-3"><input value={newExtraTask} onChange={e=>setNewExtraTask(e.target.value)} placeholder="例如：買日用品" className="min-w-0 flex-1 rounded-xl border border-[#E5E0D7] px-3 py-2 text-xs outline-none focus:border-[#9DAAA1]"/><button className="rounded-xl bg-[#66756B] text-white px-3"><Plus className="w-4 h-4"/></button></form><div className="space-y-2">{extraTasks.length?extraTasks.map(t=><div key={t.id} className="flex items-center gap-2 rounded-xl bg-[#FAF8F4] px-3 py-2.5"><button onClick={()=>toggleExtra(t.id)} className={`w-5 h-5 rounded-md border flex items-center justify-center ${t.completed?'bg-[#7C8B80] border-[#7C8B80] text-white':'border-[#D8DED9] text-transparent'}`}><Check className="w-3 h-3"/></button><span className={`flex-1 text-xs ${t.completed?'line-through text-[#9AA19C]':'text-[#4D5951]'}`}>{t.title}</span><button onClick={()=>removeExtra(t.id)} className="text-[#B2B7B3] hover:text-[#D86759]"><Trash2 className="w-3.5 h-3.5"/></button></div>):<div className="py-8 text-center text-xs text-[#A1A7A2]">還沒有額外任務</div>}</div></div></section>
+  <section className="rounded-2xl border border-[#E7E2D9] bg-white p-5 shadow-[0_8px_30px_rgba(70,65,55,0.05)]"><div className="flex items-center gap-2 mb-3"><Bot className="w-5 h-5 text-[#5A7562]"/><h3 className="font-bold text-[#29362E]">AI Team 今日狀態</h3></div><div className="grid grid-cols-1 md:grid-cols-3 gap-3"><AgentStatus label="Manager" text="統籌工作、課業與生活節奏" icon="🧭"/><AgentStatus label="Work Agent" text={`${workBlocks.filter(b=>!b.completed).length} 個工作項目待處理`} icon="💼"/><AgentStatus label="Study / Personal" text={`課業 ${studyBlocks.filter(b=>!b.completed).length} 項 · 習慣 ${completedToday}/${habitGoal}`} icon="🌱"/></div></section>
+ </div></div>;
 };
+function DomainCard({icon,title,subtitle,tone,count,total,items,onAdd}:{icon:React.ReactNode;title:string;subtitle:string;tone:'green'|'orange'|'blue';count:number;total:number;items:string[];onAdd:()=>void}){const c=tone==='green'?'bg-[#EBF4EE] text-[#4E7B5D]':tone==='orange'?'bg-[#FFF1E5] text-[#B66B3A]':'bg-[#EAF3FA] text-[#4D7EA4]';return <div className="rounded-2xl border border-[#E7E2D9] bg-white p-4 shadow-[0_8px_30px_rgba(70,65,55,0.04)]"><div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-xl flex items-center justify-center ${c}`}>{icon}</div><div className="min-w-0 flex-1"><h3 className="font-bold text-[#344039]">{title}</h3><p className="text-[11px] text-[#949B96]">{subtitle}</p></div><div className="text-right"><div className="text-lg font-black text-[#344039]">{count}/{total}</div><div className="text-[10px] text-[#9BA29D]">待完成</div></div></div><div className="mt-3 space-y-1.5 min-h-[58px]">{items.length?items.map((item,i)=><div key={`${item}-${i}`} className="text-xs text-[#626D65] truncate">• {item}</div>):<div className="text-xs text-[#A1A7A2]">今天還沒有安排</div>}</div><button onClick={onAdd} className="mt-3 text-xs font-bold text-[#5B7563] hover:underline"><Plus className="w-3.5 h-3.5 inline mr-1"/>新增</button></div>}
+function AgentStatus({label,text,icon}:{label:string;text:string;icon:string}){return <div className="rounded-xl bg-[#FAF9F6] border border-[#ECE7DE] px-4 py-3 flex items-center gap-3"><span className="text-xl">{icon}</span><div><div className="text-xs font-bold text-[#4D5951]">{label}</div><div className="text-[11px] text-[#929992] mt-0.5">{text}</div></div></div>}
+function EmptyState({text}:{text:string}){return <div className="py-8 text-center text-sm text-[#A1A7A2]">{text}</div>}
