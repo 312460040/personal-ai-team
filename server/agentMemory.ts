@@ -1,17 +1,12 @@
-import { routeManagerRequest, type AgentId } from './agentTeam';
+import { routeManagerRequest } from './agentTeam';
 
 export type MemoryDomain = 'manager' | 'work' | 'study' | 'research';
 
 type MemoryRow = {
-  id?: string;
   domain?: string;
   type?: string;
   content?: string;
   confidence?: number;
-  source?: string;
-  project_id?: string | null;
-  task_id?: string | null;
-  evidence_count?: number;
   updated_at?: string;
 };
 
@@ -60,7 +55,6 @@ function requestedDomains(agentId: string, message: string): MemoryDomain[] {
     route.delegatedAgents.forEach((id) => {
       if (id === 'work' || id === 'study' || id === 'research') domains.push(id);
     });
-    if (route.intent === 'general') domains.push('manager');
     return [...new Set(domains)];
   }
   if (agentId === 'work' || agentId === 'study' || agentId === 'research') return [agentId];
@@ -74,7 +68,7 @@ export async function loadAgentMemories(ownerId: string, agentId: string, messag
   const domains = requestedDomains(agentId, message);
   const results = await Promise.all(domains.map(async (domain) => {
     const rows = await supabase(
-      `memories?user_id=eq.${encodeURIComponent(userId)}&domain=eq.${encodeURIComponent(domain)}&select=id,domain,type,content,confidence,source,project_id,task_id,evidence_count,updated_at&order=updated_at.desc&limit=${Math.min(Math.max(limitPerDomain, 1), 20)}`,
+      `memories?user_id=eq.${encodeURIComponent(userId)}&domain=eq.${encodeURIComponent(domain)}&select=id,domain,type,content,confidence,updated_at&order=updated_at.desc&limit=${Math.min(Math.max(limitPerDomain, 1), 20)}`,
     );
     return (Array.isArray(rows) ? rows : []).map((row: MemoryRow) => ({
       domain: safeDomain(String(row.domain || domain)),
@@ -102,22 +96,18 @@ function memoryCandidates(message: string, response: any) {
   if (persistentCue) {
     candidates.push({ type: 'semantic', content: `Owner 長期資訊：${text.slice(0, 1000)}`, confidence: 0.92 });
   }
-
   if (/我們決定|決定採用|確定採用|研究方向|研究題目|研究設計|研究方法/i.test(text)) {
     candidates.push({ type: 'decision', content: `重要決策：${text.slice(0, 1000)}`, confidence: 0.95, domains: ['manager', 'research', 'study'] });
   }
-
   if (writeAction && responseText) {
     candidates.push({ type: 'interaction', content: `最近執行結果：${responseText.replace(/<!--AIT_TASK_BATCH:[\s\S]*?-->/g, '').trim().slice(0, 1000)}`, confidence: 0.78 });
   }
-
   if (createdTasks.length) {
     createdTasks.slice(0, 10).forEach((task: any) => {
       const domain: MemoryDomain = task?.subjectId || task?.subjectName ? 'study' : 'work';
       candidates.push({ type: 'task_context', content: `已建立任務「${String(task.title || '未命名任務').slice(0, 200)}」${task.projectName ? `，專案：${String(task.projectName).slice(0, 120)}` : ''}${task.subjectName ? `，科目：${String(task.subjectName).slice(0, 120)}` : ''}${task.deadline ? `，截止：${String(task.deadline).slice(0, 80)}` : ''}。`, confidence: 0.9, domains: [domain] });
     });
   }
-
   return candidates;
 }
 
@@ -144,15 +134,7 @@ export async function saveAgentMemories(ownerId: string, agentId: string, messag
       if (!content || savedKeys.has(key)) continue;
       await supabase('memories', {
         method: 'POST',
-        body: JSON.stringify({
-          user_id: userId,
-          domain,
-          type: candidate.type,
-          content,
-          source: 'agent-memory',
-          confidence: candidate.confidence,
-          evidence_count: 1,
-        }),
+        body: JSON.stringify({ user_id: userId, domain, type: candidate.type, content, source: 'agent-memory', confidence: candidate.confidence, evidence_count: 1 }),
       });
       savedKeys.add(key);
       saved += 1;
@@ -177,15 +159,6 @@ let installed = false;
 export function installAgentMemoryMiddleware() {
   if (installed) return;
   installed = true;
-  const originalPost = expressApplicationPost();
-  expressApplicationPost.set?.(originalPost);
-}
-
-function expressApplicationPost() {
-  return (requireExpressApplicationPost() as any);
-}
-
-function requireExpressApplicationPost() {
   const express = require('express');
   const originalPost = express.application.post;
   express.application.post = function agentMemoryPost(path: any, ...handlers: any[]) {
@@ -199,9 +172,8 @@ function requireExpressApplicationPost() {
         try {
           const memories = await loadAgentMemories(ownerId, agentId, message);
           if (memories.length) {
-            const memoryText = memoryHeader(memories);
             const history = Array.isArray(req.body?.history) ? req.body.history : [];
-            req.body.history = [...history, { sender: 'assistant', text: memoryText }].slice(-20);
+            req.body.history = [...history, { sender: 'assistant', text: memoryHeader(memories) }].slice(-20);
             req.body.context = { ...(req.body.context || {}), agentMemoryDomains: [...new Set(memories.map((m) => m.domain))] };
           }
         } catch (error) {
@@ -218,10 +190,8 @@ function requireExpressApplicationPost() {
     });
     return originalPost.call(this, path, ...wrapped);
   };
-  return originalPost;
 }
 
-// The import is intentionally side-effectful: server-entry already patches
-// app.post after importing persistence.ts, so this layer wraps that registration
-// without changing the existing chat implementation.
+// server-entry imports persistence.ts before it installs its own app.post wrapper.
+// Importing this module therefore installs a persistent memory layer underneath the existing chat route.
 installAgentMemoryMiddleware();
