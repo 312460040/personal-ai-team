@@ -47,11 +47,13 @@ Promise.all([
   import('./services/apiRouting'),
   import('./App.tsx'),
   import('./components/ResearchTaskBridge'),
+  import('./components/ManagerOnboardingBridge'),
 ])
-  .then(([planningModule, _routingModule, appModule, bridgeModule]) => {
+  .then(([planningModule, _routingModule, appModule, bridgeModule, onboardingModule]) => {
     planningModule.installManagerPlanningOverlay();
     const App = appModule.default;
     const ResearchTaskBridge = bridgeModule.ResearchTaskBridge;
+    const ManagerOnboardingBridge = onboardingModule.ManagerOnboardingBridge;
     root.render(
       <React.StrictMode>
         <>
@@ -61,6 +63,7 @@ Promise.all([
             </div>
           </AppErrorBoundary>
           <ResearchTaskBridge />
+          <ManagerOnboardingBridge />
         </>
       </React.StrictMode>,
     );
