@@ -1,166 +1,28 @@
 import { randomUUID } from 'node:crypto';
 
 type SupabaseRow = Record<string, any>;
-
-function env(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not configured`);
-  return value.replace(/\/$/, '');
-}
-
-async function supabase(path: string, init: RequestInit = {}) {
-  const url = `${env('SUPABASE_URL')}/rest/v1/${path}`;
-  const headers = {
-    apikey: env('SUPABASE_SERVICE_ROLE_KEY'),
-    Authorization: `Bearer ${env('SUPABASE_SERVICE_ROLE_KEY')}`,
-    'Content-Type': 'application/json',
-    ...(init.headers || {}),
-  };
-  const response = await fetch(url, { ...init, headers });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Supabase ${response.status}: ${text.slice(0, 500)}`);
-  return text ? JSON.parse(text) : [];
-}
-
+function env(name: string) { const value = process.env[name]; if (!value) throw new Error(`${name} is not configured`); return value.replace(/\/$/, ''); }
+async function supabase(path: string, init: RequestInit = {}) { const key = env('SUPABASE_SERVICE_ROLE_KEY'); const response = await fetch(`${env('SUPABASE_URL')}/rest/v1/${path}`, { ...init, headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(init.headers || {}) } }); const text = await response.text(); if (!response.ok) throw new Error(`Supabase ${response.status}: ${text.slice(0, 500)}`); return text ? JSON.parse(text) : []; }
 function q(value: string) { return encodeURIComponent(value); }
+export async function resolveOwnerUserId(externalOwnerId: string) { const owner = String(externalOwnerId || 'personal-owner').trim() || 'personal-owner'; const existing = await supabase(`users?external_id=eq.${q(owner)}&select=id&limit=1`); if (Array.isArray(existing) && existing[0]?.id) return String(existing[0].id); const created = await supabase('users', { method: 'POST', body: JSON.stringify({ external_id: owner, display_name: owner }) }); if (Array.isArray(created) && created[0]?.id) return String(created[0].id); throw new Error('Unable to resolve owner'); }
+export type AgentToolContext = { userId: string; agentId: string; writeAuthorized: boolean; selectedTaskIds?: string[] };
+export type ToolResult = { ok: boolean; tool: string; data?: any; error?: string };
+async function assertProject(userId: string, projectId: string) { const rows = await supabase(`projects?user_id=eq.${q(userId)}&id=eq.${q(projectId)}&select=id,title,status,workspace_id&limit=1`); return Array.isArray(rows) ? rows[0] : null; }
+async function assertSubject(userId: string, subjectId: string) { const rows = await supabase(`study_subjects?user_id=eq.${q(userId)}&id=eq.${q(subjectId)}&select=id,name,status&limit=1`); return Array.isArray(rows) ? rows[0] : null; }
+async function assertTask(userId: string, taskId: string) { const rows = await supabase(`tasks?user_id=eq.${q(userId)}&id=eq.${q(taskId)}&select=*&limit=1`); return Array.isArray(rows) ? rows[0] : null; }
 
-export type AgentToolContext = {
-  userId: string;
-  agentId: string;
-  writeAuthorized: boolean;
-  selectedTaskIds?: string[];
-};
+export async function getTasks(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> { const filters = [`user_id=eq.${q(ctx.userId)}`]; if (args.domain === 'work' || args.domain === 'study') filters.push(`domain=eq.${q(args.domain)}`); if (typeof args.status === 'string' && ['todo','in_progress','completed','delayed'].includes(args.status)) filters.push(`status=eq.${q(args.status)}`); if (typeof args.projectId === 'string' && args.projectId) filters.push(`project_id=eq.${q(args.projectId)}`); if (typeof args.subjectId === 'string' && args.subjectId) filters.push(`subject_id=eq.${q(args.subjectId)}`); const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 100); const rows = await supabase(`tasks?${filters.join('&')}&select=*&order=deadline.asc.nullslast,created_at.desc&limit=${limit}`); return { ok: true, tool: 'get_tasks', data: Array.isArray(rows) ? rows : [] }; }
+export async function getProjects(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> { const filters = [`user_id=eq.${q(ctx.userId)}`]; if (typeof args.status === 'string') filters.push(`status=eq.${q(args.status)}`); const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 100); const rows = await supabase(`projects?${filters.join('&')}&select=*&order=deadline.asc.nullslast,created_at.desc&limit=${limit}`); return { ok: true, tool: 'get_projects', data: Array.isArray(rows) ? rows : [] }; }
+export async function getStudySubjects(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> { const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 100); const rows = await supabase(`study_subjects?user_id=eq.${q(ctx.userId)}&select=*&order=next_exam_date.asc.nullslast,created_at.desc&limit=${limit}`); return { ok: true, tool: 'get_study_subjects', data: Array.isArray(rows) ? rows : [] }; }
 
-export type ToolResult = {
-  ok: boolean;
-  tool: string;
-  data?: any;
-  error?: string;
-};
-
-async function assertProject(userId: string, projectId: string) {
-  const rows = await supabase(`projects?user_id=eq.${q(userId)}&id=eq.${q(projectId)}&select=id,title,status,workspace_id&limit=1`);
-  return Array.isArray(rows) ? rows[0] : null;
-}
-
-async function assertSubject(userId: string, subjectId: string) {
-  const rows = await supabase(`study_subjects?user_id=eq.${q(userId)}&id=eq.${q(subjectId)}&select=id,name,status&limit=1`);
-  return Array.isArray(rows) ? rows[0] : null;
-}
-
-async function assertTask(userId: string, taskId: string) {
-  const rows = await supabase(`tasks?user_id=eq.${q(userId)}&id=eq.${q(taskId)}&select=*&limit=1`);
-  return Array.isArray(rows) ? rows[0] : null;
-}
-
-function taskDomain(task: SupabaseRow) {
-  if (task.domain === 'study' || task.subject_id) return 'study';
-  return 'work';
-}
-
-export async function getTasks(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> {
-  const filters: string[] = [`user_id=eq.${q(ctx.userId)}`];
-  if (args.domain === 'work' || args.domain === 'study') filters.push(`domain=eq.${q(args.domain)}`);
-  if (typeof args.status === 'string' && ['todo', 'in_progress', 'completed', 'delayed'].includes(args.status)) filters.push(`status=eq.${q(args.status)}`);
-  if (typeof args.projectId === 'string' && args.projectId) filters.push(`project_id=eq.${q(args.projectId)}`);
-  if (typeof args.subjectId === 'string' && args.subjectId) filters.push(`subject_id=eq.${q(args.subjectId)}`);
-  const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 100);
-  const rows = await supabase(`tasks?${filters.join('&')}&select=*&order=deadline.asc.nullslast,created_at.desc&limit=${limit}`);
-  return { ok: true, tool: 'get_tasks', data: Array.isArray(rows) ? rows : [] };
-}
-
-export async function getProjects(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> {
-  const filters = [`user_id=eq.${q(ctx.userId)}`];
-  if (typeof args.status === 'string') filters.push(`status=eq.${q(args.status)}`);
-  const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 100);
-  const rows = await supabase(`projects?${filters.join('&')}&select=*&order=deadline.asc.nullslast,created_at.desc&limit=${limit}`);
-  return { ok: true, tool: 'get_projects', data: Array.isArray(rows) ? rows : [] };
-}
-
-export async function getStudySubjects(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> {
-  const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 100);
-  const rows = await supabase(`study_subjects?user_id=eq.${q(ctx.userId)}&select=*&order=next_exam_date.asc.nullslast,created_at.desc&limit=${limit}`);
-  return { ok: true, tool: 'get_study_subjects', data: Array.isArray(rows) ? rows : [] };
-}
-
-export async function createTask(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> {
-  if (!ctx.writeAuthorized) return { ok: false, tool: 'create_task', error: 'WRITE_NOT_AUTHORIZED' };
-  const domain = args.domain === 'study' ? 'study' : args.domain === 'work' ? 'work' : '';
-  if (!domain) return { ok: false, tool: 'create_task', error: 'DOMAIN_REQUIRED' };
-  const title = typeof args.title === 'string' ? args.title.trim().slice(0, 200) : '';
-  if (!title) return { ok: false, tool: 'create_task', error: 'TITLE_REQUIRED' };
-  if (domain === 'work') {
-    const projectId = String(args.projectId || '');
-    const project = await assertProject(ctx.userId, projectId);
-    if (!project) return { ok: false, tool: 'create_task', error: 'PROJECT_NOT_FOUND_OR_NOT_OWNED' };
-    const row = {
-      id: String(args.id || `w-task-agent-${randomUUID()}`), user_id: ctx.userId, project_id: project.id,
-      domain: 'work', title, status: ['todo','in_progress','completed','delayed'].includes(args.status) ? args.status : 'todo',
-      priority: ['low','medium','high'].includes(args.priority) ? args.priority : 'medium',
-      deadline: typeof args.deadline === 'string' && args.deadline ? args.deadline : null,
-      estimated_hours: Number.isFinite(Number(args.estimatedHours)) ? Math.max(0, Math.min(24, Number(args.estimatedHours))) : 1,
-      notes: typeof args.notes === 'string' ? args.notes.slice(0, 2000) : null, source: 'agent', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-    };
-    const created = await supabase('tasks', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
-    return { ok: true, tool: 'create_task', data: Array.isArray(created) ? created[0] : created };
-  }
-  const subjectId = String(args.subjectId || '');
-  const subject = await assertSubject(ctx.userId, subjectId);
-  if (!subject) return { ok: false, tool: 'create_task', error: 'SUBJECT_NOT_FOUND_OR_NOT_OWNED' };
-  const row = {
-    id: String(args.id || `s-task-agent-${randomUUID()}`), user_id: ctx.userId, subject_id: subject.id,
-    domain: 'study', title, status: ['todo','in_progress','completed','delayed'].includes(args.status) ? args.status : 'todo',
-    priority: ['low','medium','high'].includes(args.priority) ? args.priority : 'medium',
-    deadline: typeof args.deadline === 'string' && args.deadline ? args.deadline : null,
-    estimated_hours: Number.isFinite(Number(args.estimatedHours)) ? Math.max(0, Math.min(24, Number(args.estimatedHours))) : 1,
-    progress: 0, notes: typeof args.notes === 'string' ? args.notes.slice(0, 2000) : null, source: 'agent', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-  };
-  const created = await supabase('tasks', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
-  return { ok: true, tool: 'create_task', data: Array.isArray(created) ? created[0] : created };
-}
-
-export async function updateTask(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> {
-  if (!ctx.writeAuthorized) return { ok: false, tool: 'update_task', error: 'WRITE_NOT_AUTHORIZED' };
-  const taskId = String(args.taskId || '');
-  const task = await assertTask(ctx.userId, taskId);
-  if (!task) return { ok: false, tool: 'update_task', error: 'TASK_NOT_FOUND_OR_NOT_OWNED' };
-  if (ctx.selectedTaskIds?.length && !ctx.selectedTaskIds.includes(taskId)) return { ok: false, tool: 'update_task', error: 'TASK_NOT_SELECTED' };
-  const updates: any = {};
-  if (typeof args.title === 'string' && args.title.trim()) updates.title = args.title.trim().slice(0, 200);
-  if (['todo','in_progress','completed','delayed'].includes(args.status)) updates.status = args.status;
-  if (['low','medium','high'].includes(args.priority)) updates.priority = args.priority;
-  if (typeof args.deadline === 'string') updates.deadline = args.deadline || null;
-  if (Number.isFinite(Number(args.estimatedHours))) updates.estimated_hours = Math.max(0, Math.min(24, Number(args.estimatedHours)));
-  if (typeof args.progress === 'number' && Number.isFinite(args.progress)) updates.progress = Math.max(0, Math.min(100, args.progress));
-  if (typeof args.notes === 'string') updates.notes = args.notes.slice(0, 2000);
-  if (updates.status === 'completed') updates.progress = 100;
-  if (!Object.keys(updates).length) return { ok: false, tool: 'update_task', error: 'NO_VALID_UPDATES' };
-  updates.updated_at = new Date().toISOString();
-  const rows = await supabase(`tasks?user_id=eq.${q(ctx.userId)}&id=eq.${q(taskId)}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(updates) });
-  return { ok: true, tool: 'update_task', data: Array.isArray(rows) ? rows[0] : rows };
-}
-
-export async function executeAgentTool(name: string, ctx: AgentToolContext, args: any): Promise<ToolResult> {
-  try {
-    switch (name) {
-      case 'get_tasks': return await getTasks(ctx, args);
-      case 'get_projects': return await getProjects(ctx, args);
-      case 'get_study_subjects': return await getStudySubjects(ctx, args);
-      case 'create_task': return await createTask(ctx, args);
-      case 'update_task': return await updateTask(ctx, args);
-      case 'complete_task': return await updateTask(ctx, { ...args, status: 'completed', progress: 100 });
-      default: return { ok: false, tool: name, error: 'UNKNOWN_TOOL' };
-    }
-  } catch (error) {
-    return { ok: false, tool: name, error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
+export async function createTask(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> { if (!ctx.writeAuthorized) return { ok: false, tool: 'create_task', error: 'WRITE_NOT_AUTHORIZED' }; const domain = args.domain === 'study' ? 'study' : args.domain === 'work' ? 'work' : ''; if (!domain) return { ok: false, tool: 'create_task', error: 'DOMAIN_REQUIRED' }; const title = typeof args.title === 'string' ? args.title.trim().slice(0, 200) : ''; if (!title) return { ok: false, tool: 'create_task', error: 'TITLE_REQUIRED' }; const status = ['todo','in_progress','completed','delayed'].includes(args.status) ? args.status : 'todo'; const priority = ['low','medium','high'].includes(args.priority) ? args.priority : 'medium'; const deadline = typeof args.deadline === 'string' && args.deadline ? args.deadline : null; const estimatedHours = Number.isFinite(Number(args.estimatedHours)) ? Math.max(0, Math.min(24, Number(args.estimatedHours))) : 1; const now = new Date().toISOString(); if (domain === 'work') { const projectId = String(args.projectId || ''); const project = await assertProject(ctx.userId, projectId); if (!project) return { ok: false, tool: 'create_task', error: 'PROJECT_NOT_FOUND_OR_NOT_OWNED' }; const row = { id: String(args.id || `w-task-agent-${randomUUID()}`), user_id: ctx.userId, project_id: project.id, domain: 'work', title, status, priority, deadline, estimated_hours: estimatedHours, notes: typeof args.notes === 'string' ? args.notes.slice(0, 2000) : null, source: 'agent', created_at: now, updated_at: now }; const created = await supabase('tasks', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) }); return { ok: true, tool: 'create_task', data: Array.isArray(created) ? created[0] : created }; } const subjectId = String(args.subjectId || ''); const subject = await assertSubject(ctx.userId, subjectId); if (!subject) return { ok: false, tool: 'create_task', error: 'SUBJECT_NOT_FOUND_OR_NOT_OWNED' }; const row = { id: String(args.id || `s-task-agent-${randomUUID()}`), user_id: ctx.userId, subject_id: subject.id, domain: 'study', title, status, priority, deadline, estimated_hours: estimatedHours, progress: status === 'completed' ? 100 : 0, notes: typeof args.notes === 'string' ? args.notes.slice(0, 2000) : null, source: 'agent', created_at: now, updated_at: now }; const created = await supabase('tasks', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) }); return { ok: true, tool: 'create_task', data: Array.isArray(created) ? created[0] : created }; }
+export async function updateTask(ctx: AgentToolContext, args: any = {}): Promise<ToolResult> { if (!ctx.writeAuthorized) return { ok: false, tool: 'update_task', error: 'WRITE_NOT_AUTHORIZED' }; const taskId = String(args.taskId || ''); const task = await assertTask(ctx.userId, taskId); if (!task) return { ok: false, tool: 'update_task', error: 'TASK_NOT_FOUND_OR_NOT_OWNED' }; if (ctx.selectedTaskIds?.length && !ctx.selectedTaskIds.includes(taskId)) return { ok: false, tool: 'update_task', error: 'TASK_NOT_SELECTED' }; const updates: any = {}; if (typeof args.title === 'string' && args.title.trim()) updates.title = args.title.trim().slice(0, 200); if (['todo','in_progress','completed','delayed'].includes(args.status)) updates.status = args.status; if (['low','medium','high'].includes(args.priority)) updates.priority = args.priority; if (typeof args.deadline === 'string') updates.deadline = args.deadline || null; if (Number.isFinite(Number(args.estimatedHours))) updates.estimated_hours = Math.max(0, Math.min(24, Number(args.estimatedHours))); if (typeof args.progress === 'number' && Number.isFinite(args.progress)) updates.progress = Math.max(0, Math.min(100, args.progress)); if (typeof args.notes === 'string') updates.notes = args.notes.slice(0, 2000); if (updates.status === 'completed') updates.progress = 100; if (!Object.keys(updates).length) return { ok: false, tool: 'update_task', error: 'NO_VALID_UPDATES' }; updates.updated_at = new Date().toISOString(); const rows = await supabase(`tasks?user_id=eq.${q(ctx.userId)}&id=eq.${q(taskId)}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(updates) }); return { ok: true, tool: 'update_task', data: Array.isArray(rows) ? rows[0] : rows }; }
+export async function executeAgentTool(name: string, ctx: AgentToolContext, args: any): Promise<ToolResult> { try { switch (name) { case 'get_tasks': return await getTasks(ctx, args); case 'get_projects': return await getProjects(ctx, args); case 'get_study_subjects': return await getStudySubjects(ctx, args); case 'create_task': return await createTask(ctx, args); case 'update_task': return await updateTask(ctx, args); case 'complete_task': return await updateTask(ctx, { ...args, status: 'completed', progress: 100 }); default: return { ok: false, tool: name, error: 'UNKNOWN_TOOL' }; } } catch (error) { return { ok: false, tool: name, error: error instanceof Error ? error.message : String(error) }; } }
 export const AGENT_TOOL_DECLARATIONS = [
-  { name: 'get_tasks', description: '查詢目前 Owner 擁有的任務，可依領域、狀態、專案或科目篩選。', parametersJsonSchema: { type: 'object', properties: { domain: { type: 'string', enum: ['work','study'] }, status: { type: 'string', enum: ['todo','in_progress','completed','delayed'] }, projectId: { type: 'string' }, subjectId: { type: 'string' }, limit: { type: 'integer' } } } },
-  { name: 'get_projects', description: '查詢 Owner 真實擁有的工作專案。', parametersJsonSchema: { type: 'object', properties: { status: { type: 'string' }, limit: { type: 'integer' } } } },
-  { name: 'get_study_subjects', description: '查詢 Owner 真實擁有的課業科目。', parametersJsonSchema: { type: 'object', properties: { limit: { type: 'integer' } } } },
-  { name: 'create_task', description: '建立任務。工作任務必須引用真實 projectId；課業任務必須引用真實 subjectId。只有 Owner 已授權寫入時才能呼叫。', parametersJsonSchema: { type: 'object', required: ['domain','title'], properties: { domain: { type: 'string', enum: ['work','study'] }, title: { type: 'string' }, projectId: { type: 'string' }, subjectId: { type: 'string' }, status: { type: 'string', enum: ['todo','in_progress','completed','delayed'] }, priority: { type: 'string', enum: ['low','medium','high'] }, deadline: { type: 'string' }, estimatedHours: { type: 'number' }, notes: { type: 'string' } } } },
-  { name: 'update_task', description: '更新 Owner 已擁有的任務；不可修改未擁有或未選取的任務。', parametersJsonSchema: { type: 'object', required: ['taskId'], properties: { taskId: { type: 'string' }, title: { type: 'string' }, status: { type: 'string', enum: ['todo','in_progress','completed','delayed'] }, priority: { type: 'string', enum: ['low','medium','high'] }, deadline: { type: 'string' }, estimatedHours: { type: 'number' }, progress: { type: 'number' }, notes: { type: 'string' } } } },
-  { name: 'complete_task', description: '完成 Owner 已擁有的任務，會同步設定 progress=100。', parametersJsonSchema: { type: 'object', required: ['taskId'], properties: { taskId: { type: 'string' } } } },
+  { name: 'get_tasks', description: '查詢 Owner 真實擁有的任務。', parameters: { type: 'object', properties: { domain: { type: 'string', enum: ['work','study'] }, status: { type: 'string', enum: ['todo','in_progress','completed','delayed'] }, projectId: { type: 'string' }, subjectId: { type: 'string' }, limit: { type: 'integer' } } } },
+  { name: 'get_projects', description: '查詢 Owner 真實擁有的工作專案。', parameters: { type: 'object', properties: { status: { type: 'string' }, limit: { type: 'integer' } } } },
+  { name: 'get_study_subjects', description: '查詢 Owner 真實擁有的課業科目。', parameters: { type: 'object', properties: { limit: { type: 'integer' } } } },
+  { name: 'create_task', description: '建立任務；工作必須引用真實 projectId，課業必須引用真實 subjectId。', parameters: { type: 'object', required: ['domain','title'], properties: { domain: { type: 'string', enum: ['work','study'] }, title: { type: 'string' }, projectId: { type: 'string' }, subjectId: { type: 'string' }, status: { type: 'string', enum: ['todo','in_progress','completed','delayed'] }, priority: { type: 'string', enum: ['low','medium','high'] }, deadline: { type: 'string' }, estimatedHours: { type: 'number' }, notes: { type: 'string' } } } },
+  { name: 'update_task', description: '更新 Owner 已擁有的任務；不可修改未選取的任務。', parameters: { type: 'object', required: ['taskId'], properties: { taskId: { type: 'string' }, title: { type: 'string' }, status: { type: 'string', enum: ['todo','in_progress','completed','delayed'] }, priority: { type: 'string', enum: ['low','medium','high'] }, deadline: { type: 'string' }, estimatedHours: { type: 'number' }, progress: { type: 'number' }, notes: { type: 'string' } } } },
+  { name: 'complete_task', description: '完成 Owner 已擁有的任務並設定進度 100%。', parameters: { type: 'object', required: ['taskId'], properties: { taskId: { type: 'string' } } } },
 ] as const;
