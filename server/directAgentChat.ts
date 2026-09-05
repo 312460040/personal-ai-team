@@ -5,86 +5,20 @@ import { AGENT_TOOL_DECLARATIONS, executeAgentTool, resolveOwnerUserId, type Too
 
 const router = express.Router();
 const AGENTS: Record<string, { name: string; role: string; specialty: string }> = {
-  manager: { name: 'Manager Agent', role: 'AI 總管', specialty: '統籌、決策、工作與課業協調、時間安排與任務管理' },
+  manager: { name: 'Manager Agent', role: 'AI 總管', specialty: '統籌、決策、工作、課業、個人生活協調與時間安排' },
   work: { name: 'Work Agent', role: '工作管理員', specialty: '工作專案、任務優先級、截止日、工時、拆解與執行阻礙' },
   study: { name: 'Study Agent', role: '課業管理員', specialty: '課業、複習、考試與學習進度' },
   research: { name: 'Research Agent', role: '調研分析員', specialty: '論文、文獻檢索、研究方法、研究設計、統計分析與資料驗證' },
+  personal: { name: 'Personal Agent', role: '個人生活管理員', specialty: '日常習慣、習慣打卡、個人備忘、提醒與生活規劃' },
 };
-const WRITE_PATTERN = /新增|建立|修改|更新|刪除|完成|取消|安排|排程|排定|加入|移除|標記|改成|調整|記下|幫我做|幫我改|幫我完成/i;
-
+const WRITE_PATTERN = /新增|建立|修改|更新|刪除|完成|取消|安排|排程|排定|加入|移除|標記|改成|調整|記下|打卡|勾選|完成習慣|幫我做|幫我改|幫我完成/i;
 function profile(id: string, name?: string, role?: string) { return AGENTS[id] || { name: name || 'AI 員工', role: role || '專案助理', specialty: '依 Owner 指派的專業工作提供協助' }; }
 function ownerExternalId(req: express.Request) { return String(req.header('x-owner-id') || 'personal-owner'); }
 function safeHistory(history: any[]) { return Array.isArray(history) ? history.slice(-20).map((m: any) => ({ role: m?.sender === 'user' ? 'user' : 'model', parts: [{ text: String(m?.text || '').slice(0, 5000) }] })) : []; }
-function toolPolicy(agentId: string, writeAuthorized: boolean) { const domain = agentId === 'work' ? '工作' : agentId === 'study' ? '課業' : agentId === 'research' ? '研究' : '全域'; return `你是 Personal AI Team 的${AGENTS[agentId]?.role || 'AI 員工'}。你不是客服，而是會真正執行工作的長期同事。\n你的負責領域：${domain}。\n你可以使用真實資料工具查詢 Owner 的 Tasks、Projects、Study Subjects。\n${writeAuthorized ? 'Owner 本次訊息已明確要求執行變更，你可以建立或更新任務，但只能操作工具驗證過且屬於 Owner 的資料。' : '本次訊息沒有明確授權寫入，不得建立或修改任何資料；需要資料時使用唯讀工具。'}\n不要猜 projectId、subjectId 或 taskId。若工具找不到資料，就向 Owner 說明需要補充資訊。\nResearch Agent 不得把研究工作誤寫成 Study Task，除非 Owner 明確指定課業科目。\n使用自然、成熟、繁體中文。工具執行成功後，要以工具回傳的真實結果回答，不要假裝執行。` }
+function toolPolicy(agentId: string, writeAuthorized: boolean) { const domain = agentId === 'work' ? '工作' : agentId === 'study' ? '課業' : agentId === 'research' ? '研究' : agentId === 'personal' ? '個人生活' : '全域'; return `你是 Personal AI Team 的${AGENTS[agentId]?.role || 'AI 員工'}。你不是客服，而是會真正執行工作的長期同事。\n你的負責領域：${domain}。\n你可以使用真實資料工具查詢 Owner 的 Tasks、Projects、Study Subjects。\n${writeAuthorized ? 'Owner 本次訊息已明確要求執行變更。若目前工具沒有對應的個人資料寫入能力，不得把工作／課業 Task 工具冒充成個人備忘或習慣資料；只能執行工具真正支援的操作。' : '本次訊息沒有明確授權寫入，不得建立或修改任何資料；需要資料時使用唯讀工具。'}\n不要猜 projectId、subjectId 或 taskId。若工具找不到資料，就向 Owner 說明需要補充資訊。\nResearch Agent 不得把研究工作誤寫成 Study Task，除非 Owner 明確指定課業科目。\nPersonal Agent 不得把生活備忘、習慣打卡誤寫成工作或課業任務。\n使用自然、成熟、繁體中文。工具執行成功後，要以工具回傳的真實結果回答，不要假裝執行。` }
 function requestData(prompt: string, agentId: string, context: any, routing: any, executionLabel: string) { return `${toolPolicy(agentId, routing.requiresDataWrite)}\n\n【Team Execution Plan】\n${executionLabel}\n\n【Owner 最新訊息】\n${prompt}\n\n【前端上下文（僅作補充，不可取代工具查證）】\n${JSON.stringify({ chatRoom: context?.chatRoom, selectedTaskIds: context?.selectedTaskIds || [] })}\n\n如果需要真實資料，請先呼叫工具再回答。` }
-
 function uiTask(row: any) { return { id: String(row.id), workspaceId: row.domain === 'study' ? 'study' : 'work', projectId: row.project_id || undefined, subjectId: row.subject_id || undefined, title: row.title, status: row.status || 'todo', priority: row.priority || 'medium', deadline: row.deadline || '', estimatedHours: Number(row.estimated_hours || 0), progress: Number(row.progress || 0), notes: row.notes || '', source: 'user', createdBy: 'agent', createdAt: row.created_at, updatedAt: row.updated_at }; }
 function toolActions(results: ToolResult[]) { const actions: any[] = []; for (const result of results) { if (!result.ok || !result.data) continue; if (result.tool === 'create_task') actions.push({ action: 'create', task: uiTask(result.data) }); if (result.tool === 'update_task' || result.tool === 'complete_task') actions.push({ action: 'update', taskId: String(result.data.id), domain: result.data.domain === 'study' ? 'study' : 'work', updates: { title: result.data.title, status: result.data.status, priority: result.data.priority, deadline: result.data.deadline || '', estimatedHours: Number(result.data.estimated_hours || 0), progress: Number(result.data.progress || 0), notes: result.data.notes || '' } }); } return actions; }
-
-async function generateWithTools(client: GoogleGenAI, model: string, prompt: string, agentId: string, userId: string, selectedTaskIds: string[], writeAuthorized: boolean, history: any[] = []) {
-  const tools = [{ functionDeclarations: AGENT_TOOL_DECLARATIONS as any }];
-  const contents: any[] = [...history, { role: 'user', parts: [{ text: prompt }] }];
-  const executed: ToolResult[] = [];
-  for (let round = 0; round < 4; round += 1) {
-    const response = await client.models.generateContent({ model, contents, config: { tools } });
-    const calls = Array.isArray((response as any).functionCalls) ? (response as any).functionCalls : [];
-    if (!calls.length) return { text: String(response.text || '我有收到。'), toolResults: executed, actions: toolActions(executed) };
-    const responseContent = response.candidates?.[0]?.content;
-    if (responseContent) contents.push(responseContent);
-    const functionResponses = [];
-    for (const call of calls) {
-      const result = await executeAgentTool(String(call.name), { userId, agentId, writeAuthorized, selectedTaskIds }, call.args || {});
-      executed.push(result);
-      functionResponses.push({ functionResponse: { name: String(call.name), id: call.id, response: { result } } });
-    }
-    contents.push({ role: 'user', parts: functionResponses });
-  }
-  return { text: '我已執行工具查詢，但這次工具鏈超過安全執行輪次。請再告訴我你要處理哪一項。', toolResults: executed, actions: toolActions(executed) };
-}
-
-router.post('/chat', async (req, res) => {
-  const body = req.body || {};
-  const prompt = String(body.message || '').trim();
-  if (!prompt) return res.status(400).json({ error: 'Message cannot be empty' });
-  const requestedAgentId = String(body.agentId || 'manager');
-  const routing = requestedAgentId === 'manager' ? routeManagerRequest(prompt) : {
-    primaryAgent: ['work','study','research'].includes(requestedAgentId) ? requestedAgentId : 'manager',
-    delegatedAgents: ['work','study','research'].includes(requestedAgentId) ? [requestedAgentId] : [],
-    intent: requestedAgentId === 'research' ? 'research' : requestedAgentId === 'work' || requestedAgentId === 'study' ? requestedAgentId : 'general',
-    reason: 'Owner 已直接指定專業 Agent。',
-    requiresDataWrite: WRITE_PATTERN.test(prompt),
-  } as any;
-  const executionPlan = buildTeamExecutionPlan(routing as any);
-  const effectiveAgentId = requestedAgentId === 'manager' ? routing.primaryAgent : requestedAgentId;
-  const effectiveProfile = profile(effectiveAgentId, body.agentName, body.agentRole);
-  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: 'GEMINI_API_KEY is not configured' });
-  try {
-    const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { headers: { 'User-Agent': 'personal-ai-team' } } });
-    const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
-    const ownerId = await resolveOwnerUserId(ownerExternalId(req));
-    const selectedTaskIds = Array.isArray(body.context?.selectedTaskIds) ? body.context.selectedTaskIds.map(String) : [];
-    const history = safeHistory(body.history || []);
-    const executionLabel = executionPlan.steps.map((step: any, index: number) => `${index + 1}. ${step.agentId}：${step.purpose}`).join('\n');
-    let finalAgentId: AgentId = effectiveAgentId as AgentId;
-    let final: any;
-    let specialistResults: Record<string, any> = {};
-    let allToolResults: ToolResult[] = [];
-    if (requestedAgentId === 'manager' && routing.intent === 'mixed') {
-      const specialists = routing.delegatedAgents.filter((id: string) => id !== 'manager');
-      const specialistOutputs = await Promise.all(specialists.map(async (agentId: string) => ({ agentId, result: await generateWithTools(client, model, requestData(prompt, agentId, body.context || {}, { ...routing, requiresDataWrite: false }, executionLabel), agentId, ownerId, selectedTaskIds, false, history) })));
-      for (const item of specialistOutputs) { specialistResults[item.agentId] = { text: item.result.text, toolResults: item.result.toolResults }; allToolResults.push(...item.result.toolResults); }
-      const synthesis = `${toolPolicy('manager', routing.requiresDataWrite)}\n你正在整合專業 Agent 回報。\nWork/Study/Research 回報：${JSON.stringify(specialistResults)}\nOwner 原始需求：${prompt}\n請先使用工具確認需要的真實資料；若 Owner 要求寫入，只有 Manager 這一輪可以執行寫入工具。`;
-      final = await generateWithTools(client, model, synthesis, 'manager', ownerId, selectedTaskIds, routing.requiresDataWrite, history);
-      allToolResults.push(...final.toolResults); finalAgentId = 'manager';
-    } else {
-      final = await generateWithTools(client, model, requestData(prompt, effectiveAgentId, body.context || {}, routing, executionLabel), effectiveAgentId, ownerId, selectedTaskIds, routing.requiresDataWrite, history);
-      allToolResults.push(...final.toolResults);
-    }
-    const executionAudit = { requestedTools: allToolResults.length, successfulTools: allToolResults.filter((x: ToolResult) => x.ok).length, failedTools: allToolResults.filter((x: ToolResult) => !x.ok).length, writeAuthorized: Boolean(routing.requiresDataWrite), executionMode: routing.intent === 'mixed' ? 'parallel_specialists_then_manager' : 'tool_calling', finalAgent: finalAgentId, tools: allToolResults.map((x: ToolResult) => ({ tool: x.tool, ok: x.ok, error: x.error })) };
-    return res.json({ sender: 'agent', agentId: finalAgentId, requestedAgentId, agentName: AGENTS[finalAgentId]?.name || effectiveProfile.name, agentRole: AGENTS[finalAgentId]?.role || effectiveProfile.role, text: final.text, actions: final.actions, routing: { ...routing, effectiveAgentId: finalAgentId }, executionPlan, execution: { mode: executionAudit.executionMode, specialists: routing.intent === 'mixed' ? routing.delegatedAgents.filter((id: string) => id !== 'manager') : [], specialistResults, toolResults: allToolResults, finalAgent: finalAgentId, audit: executionAudit }, executionAudit });
-  } catch (error) {
-    console.error('Direct agent chat error:', error);
-    return res.status(500).json({ error: 'Direct agent chat failed' });
-  }
-});
+async function generateWithTools(client: GoogleGenAI, model: string, prompt: string, agentId: string, userId: string, selectedTaskIds: string[], writeAuthorized: boolean, history: any[] = []) { const tools = [{ functionDeclarations: AGENT_TOOL_DECLARATIONS as any }]; const contents: any[] = [...history, { role: 'user', parts: [{ text: prompt }] }]; const executed: ToolResult[] = []; for (let round = 0; round < 4; round += 1) { const response = await client.models.generateContent({ model, contents, config: { tools } }); const calls = Array.isArray((response as any).functionCalls) ? (response as any).functionCalls : []; if (!calls.length) return { text: String(response.text || '我有收到。'), toolResults: executed, actions: toolActions(executed) }; const responseContent = response.candidates?.[0]?.content; if (responseContent) contents.push(responseContent); const functionResponses = []; for (const call of calls) { const result = await executeAgentTool(String(call.name), { userId, agentId, writeAuthorized, selectedTaskIds }, call.args || {}); executed.push(result); functionResponses.push({ functionResponse: { name: String(call.name), id: call.id, response: { result } } }); } contents.push({ role: 'user', parts: functionResponses }); } return { text: '我已執行工具查詢，但這次工具鏈超過安全執行輪次。請再告訴我你要處理哪一項。', toolResults: executed, actions: toolActions(executed) }; }
+router.post('/chat', async (req, res) => { const body = req.body || {}; const prompt = String(body.message || '').trim(); if (!prompt) return res.status(400).json({ error: 'Message cannot be empty' }); const requestedAgentId = String(body.agentId || 'manager'); const activeAgentIds = ['work','study','research','personal']; const routing = requestedAgentId === 'manager' ? routeManagerRequest(prompt) : { primaryAgent: activeAgentIds.includes(requestedAgentId) ? requestedAgentId : 'manager', delegatedAgents: activeAgentIds.includes(requestedAgentId) ? [requestedAgentId] : [], intent: requestedAgentId === 'research' ? 'research' : requestedAgentId === 'work' || requestedAgentId === 'study' ? requestedAgentId : requestedAgentId === 'personal' ? 'personal' : 'general', reason: 'Owner 已直接指定專業 Agent。', requiresDataWrite: WRITE_PATTERN.test(prompt) } as any; const executionPlan = buildTeamExecutionPlan(routing as any); const effectiveAgentId = requestedAgentId === 'manager' ? routing.primaryAgent : requestedAgentId; const effectiveProfile = profile(effectiveAgentId, body.agentName, body.agentRole); if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: 'GEMINI_API_KEY is not configured' }); try { const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { headers: { 'User-Agent': 'personal-ai-team' } } }); const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'; const ownerId = await resolveOwnerUserId(ownerExternalId(req)); const selectedTaskIds = Array.isArray(body.context?.selectedTaskIds) ? body.context.selectedTaskIds.map(String) : []; const history = safeHistory(body.history || []); const executionLabel = executionPlan.steps.map((step: any, index: number) => `${index + 1}. ${step.agentId}：${step.purpose}`).join('\n'); let finalAgentId: AgentId = effectiveAgentId as AgentId; let final: any; let specialistResults: Record<string, any> = {}; let allToolResults: ToolResult[] = []; if (requestedAgentId === 'manager' && routing.intent === 'mixed') { const specialists = routing.delegatedAgents.filter((id: string) => id !== 'manager'); const specialistOutputs = await Promise.all(specialists.map(async (agentId: string) => ({ agentId, result: await generateWithTools(client, model, requestData(prompt, agentId, body.context || {}, { ...routing, requiresDataWrite: false }, executionLabel), agentId, ownerId, selectedTaskIds, false, history) }))); for (const item of specialistOutputs) { specialistResults[item.agentId] = { text: item.result.text, toolResults: item.result.toolResults }; allToolResults.push(...item.result.toolResults); } const synthesis = `${toolPolicy('manager', routing.requiresDataWrite)}\n你正在整合專業 Agent 回報。\nWork/Study/Research/Personal 回報：${JSON.stringify(specialistResults)}\nOwner 原始需求：${prompt}\n請先使用工具確認需要的真實資料；若 Owner 要求寫入，只有 Manager 這一輪可以執行寫入工具。`; final = await generateWithTools(client, model, synthesis, 'manager', ownerId, selectedTaskIds, routing.requiresDataWrite, history); allToolResults.push(...final.toolResults); finalAgentId = 'manager'; } else { final = await generateWithTools(client, model, requestData(prompt, effectiveAgentId, body.context || {}, routing, executionLabel), effectiveAgentId, ownerId, selectedTaskIds, routing.requiresDataWrite, history); allToolResults.push(...final.toolResults); } const executionAudit = { requestedTools: allToolResults.length, successfulTools: allToolResults.filter((x: ToolResult) => x.ok).length, failedTools: allToolResults.filter((x: ToolResult) => !x.ok).length, writeAuthorized: Boolean(routing.requiresDataWrite), executionMode: routing.intent === 'mixed' ? 'parallel_specialists_then_manager' : 'tool_calling', finalAgent: finalAgentId, tools: allToolResults.map((x: ToolResult) => ({ tool: x.tool, ok: x.ok, error: x.error })) }; return res.json({ sender: 'agent', agentId: finalAgentId, requestedAgentId, agentName: AGENTS[finalAgentId]?.name || effectiveProfile.name, agentRole: AGENTS[finalAgentId]?.role || effectiveProfile.role, text: final.text, actions: final.actions, routing: { ...routing, effectiveAgentId: finalAgentId }, executionPlan, execution: { mode: executionAudit.executionMode, specialists: routing.intent === 'mixed' ? routing.delegatedAgents.filter((id: string) => id !== 'manager') : [], specialistResults, toolResults: allToolResults, finalAgent: finalAgentId, audit: executionAudit }, executionAudit }); } catch (error) { console.error('Direct agent chat error:', error); return res.status(500).json({ error: 'Direct agent chat failed' }); } });
 export default router;
