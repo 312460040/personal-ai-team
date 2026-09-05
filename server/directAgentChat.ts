@@ -65,7 +65,7 @@ function parseAgentJson(text: string | undefined) {
 }
 async function callGemini(client: GoogleGenAI, systemPrompt: string, prompt: string) {
   const response = await client.models.generateContent({
-    model: 'gemini-3.7-flash',
+    model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
     contents: `${systemPrompt}\n\nOwner 最新訊息：「${prompt}」`,
     config: { responseMimeType: 'application/json', responseSchema: {
       type: 'object', properties: {
