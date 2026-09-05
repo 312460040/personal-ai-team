@@ -6,7 +6,8 @@ const APP_TIME_ZONE='Asia/Taipei';
 const dateKey=(x:Date)=>new Intl.DateTimeFormat('en-CA',{timeZone:APP_TIME_ZONE,year:'numeric',month:'2-digit',day:'2-digit'}).format(x);
 const dateAtTaipei=(key:string)=>new Date(`${key}T00:00:00+08:00`);
 const addDays=(x:Date,n:number)=>new Date(x.getTime()+n*86400000);
-const taipeiWeekStart=(x:Date)=>{const key=dateKey(x);const d=dateAtTaipei(key);const weekday=Number(new Intl.DateTimeFormat('en-US',{timeZone:APP_TIME_ZONE,weekday:'numeric'}).format(d));const offset=(weekday+6)%7;return addDays(d,-offset)};
+// Intl.DateTimeFormat does not support weekday:'numeric'. Use UTC day-of-week here because d is explicitly constructed at Asia/Taipei midnight (+08:00).
+const taipeiWeekStart=(x:Date)=>{const key=dateKey(x);const d=dateAtTaipei(key);const weekday=d.getUTCDay();const offset=(weekday+6)%7;return addDays(d,-offset)};
 const taipeiWeekday=(x:Date)=>new Intl.DateTimeFormat('zh-TW',{timeZone:APP_TIME_ZONE,weekday:'short'}).format(x);
 const taipeiDay=(x:Date)=>new Intl.DateTimeFormat('zh-TW',{timeZone:APP_TIME_ZONE,day:'numeric'}).format(x);
 const taipeiTime=(x:string)=>new Intl.DateTimeFormat('zh-TW',{timeZone:APP_TIME_ZONE,hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(x));
