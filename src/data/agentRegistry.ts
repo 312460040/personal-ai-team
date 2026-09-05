@@ -97,7 +97,7 @@ export const AGENT_REGISTRY: AgentInfo[] = [
     roleName: '調研分析員',
     tagline: '深度論文檢索、技術文獻綜述與競爭者分析',
     description: '自動整理學術期刊、技術白皮書與產業洞察報告。',
-    status: 'upcoming',
+    status: 'active',
     avatarIcon: 'Search',
     colorScheme: {
       bg: 'bg-cyan-500/10',

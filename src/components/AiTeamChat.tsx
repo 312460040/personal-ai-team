@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Send, Bot, User, Briefcase, GraduationCap, Copy, Check, ShieldCheck, PlusCircle } from 'lucide-react';
+import { Send, Bot, User, Briefcase, GraduationCap, BookOpen, Copy, Check, ShieldCheck, PlusCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { ChatMessage, AgentInfo, StructuredTimeBlock, WorkTask, StudyTask, WorkProject, StudySubject, AgentActivityLog, AgentId, AgentExecutionAudit } from '../types';
 import { apiUrl } from '../services/apiBase';
@@ -20,16 +20,17 @@ const defaultAgents: DirectAgent[] = [
   { id: 'manager', name: 'Manager', role: 'AI 總管', icon: <Bot className="w-3.5 h-3.5" /> },
   { id: 'work', name: 'Work Agent', role: '工作管理員', icon: <Briefcase className="w-3.5 h-3.5" /> },
   { id: 'study', name: 'Study Agent', role: '課業管理員', icon: <GraduationCap className="w-3.5 h-3.5" /> },
+  { id: 'research', name: 'Research Agent', role: '調研分析員', icon: <BookOpen className="w-3.5 h-3.5" /> },
 ];
 const ROOM_STORAGE_KEY = 'ait_agent_chat_rooms_v2';
 const loadRooms = (): Record<string, ChatMessage[]> => { try { return JSON.parse(localStorage.getItem(ROOM_STORAGE_KEY) || '{}'); } catch { return {}; } };
-const agentLabel = (id: string) => id === 'work' ? 'Work Agent' : id === 'study' ? 'Study Agent' : 'Manager Agent';
+const agentLabel = (id: string) => id === 'work' ? 'Work Agent' : id === 'study' ? 'Study Agent' : id === 'research' ? 'Research Agent' : 'Manager Agent';
 const auditSummary = (audit?: AgentExecutionAudit) => audit ? `${audit.executionMode === 'parallel_specialists_then_manager' ? 'Work + Study → Manager' : audit.finalAgent === 'manager' ? 'Manager' : agentLabel(audit.finalAgent)}｜寫入權限 ${audit.writeAuthorized ? '允許' : '未授權'}｜AI 提案 ${audit.requested}｜接受 ${audit.accepted}｜攔截 ${audit.rejected}` : '';
 const messageKey = (m: ChatMessage) => `${m.sender === 'user' ? 'user' : 'assistant'}|${m.agentId || ''}|${m.text}`;
 const fromDb = (row: any): ChatMessage => ({
   id: `db-conversation-${row.id}`, sender: row.role === 'user' ? 'user' : 'agent', agentId: row.agent_id || undefined,
-  agentName: row.agent_id === 'manager' ? 'Manager' : row.agent_id === 'work' ? 'Work Agent' : row.agent_id === 'study' ? 'Study Agent' : undefined,
-  agentRole: row.agent_id === 'manager' ? 'AI 總管' : row.agent_id === 'work' ? '工作管理員' : row.agent_id === 'study' ? '課業管理員' : undefined,
+  agentName: row.agent_id === 'manager' ? 'Manager' : row.agent_id === 'work' ? 'Work Agent' : row.agent_id === 'study' ? 'Study Agent' : row.agent_id === 'research' ? 'Research Agent' : undefined,
+  agentRole: row.agent_id === 'manager' ? 'AI 總管' : row.agent_id === 'work' ? '工作管理員' : row.agent_id === 'study' ? '課業管理員' : row.agent_id === 'research' ? '調研分析員' : undefined,
   text: String(row.content || ''), timestamp: row.created_at ? new Date(row.created_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }) : '',
 });
 

@@ -6,7 +6,8 @@ const router = express.Router();
 const AGENTS: Record<string, { name: string; role: string; specialty: string }> = {
   manager: { name: 'Manager Agent', role: 'AI 總管', specialty: '統籌、決策、工作與課業協調、時間安排與任務管理' },
   work: { name: 'Work Agent', role: '工作管理員', specialty: '工作專案、任務優先級、截止日、工時、拆解與執行阻礙' },
-  study: { name: 'Study Agent', role: '課業管理員', specialty: '課業、研究、複習、考試與學習進度' },
+  study: { name: 'Study Agent', role: '課業管理員', specialty: '課業、複習、考試與學習進度' },
+  research: { name: 'Research Agent', role: '調研分析員', specialty: '論文、文獻檢索、研究方法、研究設計、統計分析與資料驗證' },
 };
 
 function userOnly(items: any[] = []) {
@@ -80,7 +81,7 @@ async function callGemini(client: GoogleGenAI, systemPrompt: string, prompt: str
   return parseAgentJson(response.text);
 }
 function buildBasePrompt(profile: { name: string; role: string; specialty: string }, routing: any, executionLabel: string, data: any, selectedTaskIds: string[], history: any[]) {
-  return `你是 Personal AI Team 的長期 AI 員工。你要像真的同事一樣工作，不是客服。\n目前身份：${profile.name}（${profile.role}）。專長：${profile.specialty}。\n\n【Manager 分流】\n需求類型：${routing.intent}；理由：${routing.reason}；已委派：${routing.delegatedAgents.join(', ') || '無'}；可能寫入：${routing.requiresDataWrite ? '是' : '否'}。\n\n【Team Execution Plan】\n${executionLabel}\n\n【團隊規則】\n- Manager 是唯一總管；單一領域交給對應專業 Agent。\n- Work Agent 只處理工作資料；Study Agent 只處理課業／研究資料。\n- 混合需求必須由 Work Agent 與 Study Agent 分別分析，再交回 Manager 整合。\n- 不得捏造 User Data；資訊不足只問最關鍵的一個問題。\n\n【自然對話】\n用自然、口語、成熟的繁體中文。只有 Owner 明確要求新增或修改任務時才產生 actions。\n\n【任務操作】\n如果 Owner 說「新增／建立／幫我記下／安排一個工作」，使用 action=create，task 必須填完整且只能引用 User Data 中真實存在的 projectId 或 subjectId；若找不到可歸屬的專案／科目，就先問 Owner，不要猜。若是修改既有任務，使用 action=update 並填真實 taskId。\n\n【目前選取】\n${JSON.stringify(selectedTaskIds)}\n\n【User Data】\n${JSON.stringify(data, null, 2)}\n\n【最近對話】\n${JSON.stringify(history, null, 2)}\n\n只回傳 JSON。`;
+  return `你是 Personal AI Team 的長期 AI 員工。你要像真的同事一樣工作，不是客服。\n目前身份：${profile.name}（${profile.role}）。專長：${profile.specialty}。\n\n【Manager 分流】\n需求類型：${routing.intent}；理由：${routing.reason}；已委派：${routing.delegatedAgents.join(', ') || '無'}；可能寫入：${routing.requiresDataWrite ? '是' : '否'}。\n\n【Team Execution Plan】\n${executionLabel}\n\n【團隊規則】\n- Manager 是唯一總管；單一領域交給對應專業 Agent。\n- Work Agent 只處理工作資料；Study Agent 只處理課業資料；Research Agent 專責論文、文獻、研究方法與研究資料分析。\n- 混合需求必須由各自專業 Agent 分析，再交回 Manager 整合。\n- 不得捏造 User Data；資訊不足只問最關鍵的一個問題。\n\n【自然對話】\n用自然、口語、成熟的繁體中文。只有 Owner 明確要求新增或修改任務時才產生 actions。\n\n【任務操作】\n如果 Owner 說「新增／建立／幫我記下／安排一個工作」，使用 action=create，task 必須填完整且只能引用 User Data 中真實存在的 projectId 或 subjectId；若找不到可歸屬的專案／科目，就先問 Owner，不要猜。若是修改既有任務，使用 action=update 並填真實 taskId。\n\n【目前選取】\n${JSON.stringify(selectedTaskIds)}\n\n【User Data】\n${JSON.stringify(data, null, 2)}\n\n【最近對話】\n${JSON.stringify(history, null, 2)}\n\n只回傳 JSON。`;
 }
 function normalizeActions(rawActions: any[], allTasks: any[], projects: any[], subjects: any[], selectedTaskIds: string[], writeAuthorized: boolean) {
   const raw = Array.isArray(rawActions) ? rawActions : [];
@@ -111,7 +112,7 @@ router.post('/chat', async (req, res) => {
   if (!prompt) return res.status(400).json({ error: 'Message cannot be empty' });
   const requestedAgentId = String(agentId || 'manager');
   const routing = requestedAgentId === 'manager' ? routeManagerRequest(prompt) : {
-    primaryAgent: requestedAgentId === 'work' || requestedAgentId === 'study' ? requestedAgentId : 'manager', delegatedAgents: requestedAgentId === 'work' || requestedAgentId === 'study' ? [requestedAgentId] : [], intent: requestedAgentId === 'work' || requestedAgentId === 'study' ? requestedAgentId : 'general', reason: 'Owner 已直接指定專業 Agent。', requiresDataWrite: /新增|建立|修改|更新|刪除|完成|取消|安排|排程|排定|加入|移除|標記|改成|調整|記下/i.test(prompt)
+    primaryAgent: requestedAgentId === 'work' || requestedAgentId === 'study' || requestedAgentId === 'research' ? requestedAgentId : 'manager', delegatedAgents: requestedAgentId === 'work' || requestedAgentId === 'study' || requestedAgentId === 'research' ? [requestedAgentId] : [], intent: requestedAgentId === 'research' ? 'research' : requestedAgentId === 'work' || requestedAgentId === 'study' ? requestedAgentId : 'general', reason: 'Owner 已直接指定專業 Agent。', requiresDataWrite: /新增|建立|修改|更新|刪除|完成|取消|安排|排程|排定|加入|移除|標記|改成|調整|記下/i.test(prompt)
   } as const;
   const executionPlan = buildTeamExecutionPlan(routing);
   const effectiveAgentId = requestedAgentId === 'manager' ? routing.primaryAgent : requestedAgentId;
@@ -125,7 +126,7 @@ router.post('/chat', async (req, res) => {
   const studySubjects = userOnly(Array.isArray(context.studySubjects) ? context.studySubjects : []);
   const selectedTaskIds = Array.isArray(context.selectedTaskIds) ? context.selectedTaskIds.map(String) : [];
   const allTasks = [...workTasks.map(t => ({ ...t, domain: 'work' })), ...studyTasks.map(t => ({ ...t, domain: 'study' }))];
-  const executionLabel = executionPlan.steps.map((step, index) => `${index + 1}. ${step.agentId === 'manager' ? 'Manager Agent' : step.agentId === 'work' ? 'Work Agent' : 'Study Agent'}：${step.purpose}`).join('\n');
+  const executionLabel = executionPlan.steps.map((step, index) => `${index + 1}. ${step.agentId === 'manager' ? 'Manager Agent' : step.agentId === 'work' ? 'Work Agent' : step.agentId === 'research' ? 'Research Agent' : 'Study Agent'}：${step.purpose}`).join('\n');
   const data = { workProjects, workTasks, studySubjects, studyTasks };
   try {
     let result: any;

@@ -1,7 +1,7 @@
 import express from 'express';
 
-export type AgentId = 'manager' | 'work' | 'study';
-export type AgentIntent = 'work' | 'study' | 'mixed' | 'general';
+export type AgentId = 'manager' | 'work' | 'study' | 'research';
+export type AgentIntent = 'work' | 'study' | 'research' | 'mixed' | 'general';
 
 export type RouteResult = {
   primaryAgent: AgentId;
@@ -29,8 +29,9 @@ const router = express.Router();
 const WORK_PATTERNS = [
   /工作|任務|待辦|專案|客戶|行銷|主管|職場|上班|截止|deadline/i,
 ];
+const RESEARCH_PATTERNS = [/論文|文獻|研究方法|研究資料|研究設計|統計分析|資料分析|矩陣分解|碩論|學位論文|paper|literature|methodology/i];
 const STUDY_PATTERNS = [
-  /課業|作業|考試|讀書|學習|研究|論文|教授|課程|複習|lab/i,
+  /課業|作業|考試|讀書|學習|教授|課程|複習|lab/i,
 ];
 const WRITE_PATTERNS = [
   /新增|建立|修改|更新|刪除|完成|取消|安排|排程|排定|加入|移除|標記|改成|調整/i,
@@ -43,17 +44,22 @@ function matches(patterns: RegExp[], text: string) {
 export function routeManagerRequest(message: string): RouteResult {
   const text = message.trim();
   const isWork = matches(WORK_PATTERNS, text);
+  const isResearch = matches(RESEARCH_PATTERNS, text);
   const isStudy = matches(STUDY_PATTERNS, text);
   const requiresDataWrite = matches(WRITE_PATTERNS, text);
 
-  if (isWork && isStudy) {
+  if (isWork && (isStudy || isResearch)) {
     return {
       primaryAgent: 'manager',
-      delegatedAgents: ['work', 'study'],
+      delegatedAgents: ['work', ...(isResearch ? ['research'] : ['study'])],
       intent: 'mixed',
-      reason: '同時涉及工作與課業，Manager 需要協調兩個專業 Agent。',
+      reason: isResearch ? '同時涉及工作與研究，Manager 需要協調工作與研究專業 Agent。' : '同時涉及工作與課業，Manager 需要協調兩個專業 Agent。',
       requiresDataWrite,
     };
+  }
+
+  if (isResearch) {
+    return { primaryAgent: 'research', delegatedAgents: ['research'], intent: 'research', reason: '辨識為論文／文獻／研究方法／研究資料分析需求。', requiresDataWrite };
   }
 
   if (isWork) {
@@ -99,7 +105,7 @@ export function buildTeamExecutionPlan(route: RouteResult): TeamExecutionPlan {
     steps.push({
       agentId,
       role: 'specialist',
-      purpose: agentId === 'work' ? '讀取工作 User Data，處理工作專案與任務。' : '讀取課業／研究 User Data，處理學習與研究需求。',
+      purpose: agentId === 'work' ? '讀取工作 User Data，處理工作專案與任務。' : agentId === 'research' ? '處理論文、文獻、研究方法與研究資料分析。' : '讀取課業 User Data，處理學習與研究需求。',
       status: 'queued',
     });
   });
