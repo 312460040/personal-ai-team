@@ -1,3 +1,4 @@
+import './managerOnboarding';
 import { routeManagerRequest } from './agentTeam';
 
 export type MemoryDomain = 'manager' | 'work' | 'study' | 'research';
@@ -88,7 +89,7 @@ export async function loadAgentMemories(ownerId: string, agentId: string, messag
 }
 
 function normalize(text: string) {
-  return text.replace(/\s+/g, '').replace(/[「」『』“”"'，。！？!?、；;：:（）()【】\[\]]/g, '').toLowerCase();
+  return text.replace(/\s+/g, '').replace(/[「」『』“”\"'，。！？!?、；;：:（）()【】\[\]]/g, '').toLowerCase();
 }
 
 function memoryCandidates(message: string, response: any) {
@@ -198,6 +199,4 @@ export function installAgentMemoryMiddleware() {
   };
 }
 
-// server-entry imports persistence.ts before it installs its own app.post wrapper.
-// Importing this module therefore installs a persistent memory layer underneath the existing chat route.
 installAgentMemoryMiddleware();
