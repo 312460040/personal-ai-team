@@ -1,4 +1,4 @@
-export type AgentId = 'manager' | 'work' | 'study' | 'schedule' | 'research' | 'brainstorm' | 'email' | 'finance' | 'social' | 'hr';
+export type AgentId = 'manager' | 'work' | 'study' | 'schedule' | 'research' | 'brainstorm' | 'email' | 'finance' | 'social' | 'hr' | 'personal';
 export type AgentStatus = 'active' | 'upcoming';
 export type DataSourceType = 'user' | 'demo';
 export type CreatedByType = 'user' | 'system';
