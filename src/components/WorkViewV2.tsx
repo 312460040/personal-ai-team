@@ -1,76 +1,36 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, ChevronRight, FolderKanban, Plus, Sparkles, Building2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, FolderKanban, Plus, Sparkles, Building2, Edit3 } from 'lucide-react';
 import type { WorkProject, WorkTask } from '../types';
 import WorkProjectDetail from './WorkProjectDetail';
 import ProjectPlanPanel from './ProjectPlanPanel';
-import { LI_ROOT_TITLE, LI_SITES, inferLiSiteFromTask } from '../data/workHierarchy';
+import WorkTaskEditor from './WorkTaskEditor';
+import { LI_ROOT_TITLE, inferLiSiteFromTask } from '../data/workHierarchy';
 
 type Props={projects:WorkProject[];tasks:WorkTask[];onToggleTask:(id:string)=>void;onAddTask:(task:any)=>void;onUpdateTask:(task:WorkTask)=>void;onDeleteTask:(id:string)=>void;onAddProject:(project:any)=>void;onUpdateProject:(project:WorkProject)=>void;onDeleteProject:(id:string)=>void;onAskAgentAboutWork:(prompt:string)=>void;onClearDemoData:()=>void};
-
-const CANONICAL_CLIENTS:Record<string,string>={
-  [LI_ROOT_TITLE]:'proj-client-li-medical',
-  '綜合醫院':'proj-client-general-hospital',
-  '旅遊業的客戶':'proj-client-travel',
-};
-const SITE_IDS:Record<string,string>={
-  '立博':'proj-site-libor','新仁':'proj-site-xinren','世博':'proj-site-shibo',
-  '泰安':'proj-site-taian','板國':'proj-site-banguo','博淘':'proj-site-botao',
-};
-
+const CANONICAL_CLIENTS:Record<string,string>={[LI_ROOT_TITLE]:'proj-client-li-medical','綜合醫院':'proj-client-general-hospital','旅遊業的客戶':'proj-client-travel'};
+const SITE_IDS:Record<string,string>={'立博':'proj-site-libor','新仁':'proj-site-xinren','世博':'proj-site-shibo','泰安':'proj-site-taian','板國':'proj-site-banguo','博淘':'proj-site-botao'};
 function clean(value:any){return String(value??'').trim();}
-function canonicalProjectId(project:WorkProject){
-  const title=clean(project.title);
-  if(CANONICAL_CLIENTS[title])return CANONICAL_CLIENTS[title];
-  if(SITE_IDS[title])return SITE_IDS[title];
-  return String(project.id);
-}
+function canonicalProjectId(project:WorkProject){const title=clean(project.title);if(CANONICAL_CLIENTS[title])return CANONICAL_CLIENTS[title];if(SITE_IDS[title])return SITE_IDS[title];return String(project.id);}
 function normalizeForDisplay(projects:WorkProject[],tasks:WorkTask[]){
-  const chosen=new Map<string,WorkProject>();
-  const aliases=new Map<string,string>();
-  for(const project of projects){
-    const key=canonicalProjectId(project);
-    const existing=chosen.get(key);
-    const score=(p:WorkProject)=>(p.source==='user'?100:0)+(p.projectType==='client_root'||p.projectType==='client_site'?20:0)+(p.parentProjectId?5:0)+(p.description?1:0);
-    if(!existing||score(project)>score(existing))chosen.set(key,{...project,id:key});
-    aliases.set(String(project.id),key);
-  }
-  const normalizedProjects=Array.from(chosen.values()).map(project=>{
-    const title=clean(project.title);
-    if(title===LI_ROOT_TITLE)return {...project,id:'proj-client-li-medical',title:LI_ROOT_TITLE,projectType:'client_root',parentProjectId:undefined};
-    if(SITE_IDS[title])return {...project,id:SITE_IDS[title],title,parentProjectId:'proj-client-li-medical',projectType:'client_site',category:'李總醫療體系｜據點'};
-    if(CANONICAL_CLIENTS[title])return {...project,id:CANONICAL_CLIENTS[title],title,projectType:'client_root',parentProjectId:undefined};
-    return project;
-  });
-  const valid=new Set(normalizedProjects.map(p=>p.id));
-  const normalizedTasks:WorkTask[]=tasks.map(task=>{
-    const site=inferLiSiteFromTask(clean(task.title),clean(task.notes));
-    const inferred=site?SITE_IDS[site]:undefined;
-    const mapped=inferred||aliases.get(String(task.projectId))||String(task.projectId||'');
-    const project=normalizedProjects.find(p=>p.id===mapped);
-    if(!valid.has(mapped)&&!project)return null;
-    return {...task,projectId:mapped,projectName:project?.title||task.projectName};
-  }).filter(Boolean) as WorkTask[];
-  return {projects:normalizedProjects,tasks:normalizedTasks};
+ const chosen=new Map<string,WorkProject>();const aliases=new Map<string,string>();
+ for(const project of projects){const key=canonicalProjectId(project);const existing=chosen.get(key);const score=(p:WorkProject)=>(p.source==='user'?100:0)+(p.projectType==='client_root'||p.projectType==='client_site'?20:0)+(p.parentProjectId?5:0)+(p.description?1:0);if(!existing||score(project)>score(existing))chosen.set(key,{...project,id:key});aliases.set(String(project.id),key);}
+ const normalizedProjects=Array.from(chosen.values()).map(project=>{const title=clean(project.title);if(title===LI_ROOT_TITLE)return {...project,id:'proj-client-li-medical',title:LI_ROOT_TITLE,projectType:'client_root',parentProjectId:undefined};if(SITE_IDS[title])return {...project,id:SITE_IDS[title],title,parentProjectId:'proj-client-li-medical',projectType:'client_site',category:'李總醫療體系｜據點'};if(CANONICAL_CLIENTS[title])return {...project,id:CANONICAL_CLIENTS[title],title,projectType:'client_root',parentProjectId:undefined};return project;});
+ const valid=new Set(normalizedProjects.map(p=>p.id));
+ const normalizedTasks:WorkTask[]=tasks.map(task=>{const site=inferLiSiteFromTask(clean(task.title),clean(task.notes));const inferred=site?SITE_IDS[site]:undefined;const mapped=inferred||aliases.get(String(task.projectId))||String(task.projectId||'');const project=normalizedProjects.find(p=>p.id===mapped);if(!valid.has(mapped)&&!project)return null;return {...task,projectId:mapped,projectName:project?.title||task.projectName};}).filter(Boolean) as WorkTask[];
+ return {projects:normalizedProjects,tasks:normalizedTasks};
 }
 
 export const WorkViewV2:React.FC<Props>=(props)=>{
-  const rawProjects=props.projects,rawTasks=props.tasks;
-  const normalized=useMemo(()=>normalizeForDisplay(rawProjects,rawTasks),[rawProjects,rawTasks]);
-  const projects=normalized.projects,tasks=normalized.tasks;
-  const [selectedId,setSelectedId]=useState<string|null>(null);
-  const selected=selectedId?projects.find(p=>p.id===selectedId):undefined;
-  const childrenOf=(id:string)=>projects.filter(p=>p.parentProjectId===id);
-  const roots=useMemo(()=>projects.filter(p=>!p.parentProjectId),[projects]);
-  const children=selected?childrenOf(selected.id):[];
-  const addTask=()=>{if(!selected)return;const title=window.prompt(`新增「${selected.title}」的工作項目`);if(!title?.trim())return;props.onAddTask({workspaceId:'work',projectId:selected.id,projectName:selected.title,title:title.trim(),priority:'medium',status:'todo',deadline:'',estimatedHours:1,notes:'',tags:[],isUrgent:false,source:'user',createdBy:'user'})};
-  const addProject=()=>{const title=window.prompt('專案／客戶名稱');if(!title?.trim())return;props.onAddProject({workspaceId:'work',title:title.trim(),category:'一般專案',progress:0,priority:'medium',deadline:'',description:'',status:'planning',owner:'本人',tags:[],source:'user',createdBy:'user'})};
-  if(selected){
-    if(children.length){
-      const rootTasks=[...tasks.filter(t=>t.projectId===selected.id),...tasks.filter(t=>children.some(c=>c.id===t.projectId))];
-      return <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5"><button onClick={()=>setSelectedId(null)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#385244]"><ArrowLeft className="w-4 h-4"/>返回客戶／體系</button><section className="rounded-2xl bg-white border border-[#E5E2DC] p-5"><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2 text-[#385244] text-xs font-semibold"><Building2 className="w-4 h-4"/>客戶／醫療體系</div><h2 className="mt-2 text-2xl font-bold text-[#2D322E]">{selected.title}</h2><p className="mt-1 text-xs text-[#7A837D]">客戶／體系 → 院所／據點 → 工作分類 → 具體任務 → 進度</p></div><button onClick={()=>props.onAskAgentAboutWork(`整理「${selected.title}」旗下各據點目前的工作與優先順序。`)} className="px-3 py-2 rounded-xl bg-[#385244] text-white text-xs font-semibold">問 Manager</button></div></section><ProjectPlanPanel project={selected} tasks={rootTasks}/><section className="rounded-2xl bg-[#FDFCFB] border border-[#E5E2DC] p-4 sm:p-5"><div className="flex items-center justify-between mb-4"><div><h3 className="font-bold text-sm text-[#2D322E]">旗下據點</h3><p className="text-[10px] text-[#8C938D] mt-1">共 {children.length} 個據點</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{children.map(site=>{const siteTasks=tasks.filter(t=>t.projectId===site.id);const done=siteTasks.filter(t=>t.status==='completed').length;const progress=siteTasks.length?Math.round(done/siteTasks.length*100):site.progress;return <button key={site.id} onClick={()=>setSelectedId(site.id)} className="text-left rounded-2xl border border-[#E5E2DC] bg-white p-4 hover:border-[#B9C8BC] hover:shadow-sm transition"><div className="flex items-start gap-3"><div className="w-10 h-10 rounded-xl bg-[#EBF1EC] text-[#385244] flex items-center justify-center"><Building2 className="w-5 h-5"/></div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="font-bold text-[#2D322E]">{site.title}</span><ChevronRight className="w-4 h-4 ml-auto text-[#A0A69F]"/></div><div className="text-[11px] text-[#7A837D] mt-1">{siteTasks.length} 項任務 · 完成 {progress}%</div></div></div></button>})}</div></section></div>
-    }
-    return <WorkProjectDetail project={selected} tasks={tasks} onBack={()=>setSelectedId(null)} onToggleTask={props.onToggleTask} onEditProject={props.onUpdateProject} onEditTask={props.onUpdateTask} onAddTask={addTask}/>;
-  }
-  return <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><div className="flex items-center gap-2"><Sparkles className="w-5 h-5 text-[#6B8A73]"/><h1 className="text-xl font-bold text-[#2D322E]">工作管理</h1></div><p className="text-xs text-[#7A837D] mt-1">客戶／體系 → 院所／據點 → 工作分類 → 具體任務 → 進度 → 規劃書</p></div><div className="flex gap-2"><button onClick={addProject} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#DDD8CE] bg-white text-[#385244] text-xs font-semibold"><Plus className="w-3.5 h-3.5"/>新增客戶</button><button onClick={()=>props.onAskAgentAboutWork('檢查目前所有客戶、院所與工作任務，告訴我最應優先處理的項目。')} className="px-3 py-2 rounded-xl bg-[#385244] text-white text-xs font-semibold">問 Manager</button></div></div><section className="rounded-2xl bg-[#FDFCFB] border border-[#E5E2DC] p-4 sm:p-5"><div className="flex items-center justify-between mb-4"><div><h2 className="font-bold text-sm text-[#2D322E]">客戶／體系</h2><p className="text-[10px] text-[#8C938D] mt-1">第一層只顯示客戶／體系；每個專案都有規劃書。</p></div><span className="text-[10px] text-[#8C938D]">{roots.length} 個客戶／體系</span></div><div className="space-y-2">{roots.map(project=>{const child=childrenOf(project.id);const direct=tasks.filter(t=>t.projectId===project.id);const nested=tasks.filter(t=>child.some(c=>c.id===t.projectId));return <button key={project.id} onClick={()=>setSelectedId(project.id)} className="w-full text-left rounded-2xl border border-[#E5E2DC] bg-white p-5 hover:border-[#B9C8BC] hover:shadow-sm transition"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-xl bg-[#EBF1EC] text-[#385244] flex items-center justify-center"><FolderKanban className="w-5 h-5"/></div><div className="min-w-0 flex-1"><div className="font-bold text-[#2D322E]">{project.title}</div><div className="text-[11px] text-[#7A837D] mt-1">{child.length} 個據點 · {direct.length+nested.length} 項任務 · 📋 有規劃書</div></div><ChevronRight className="w-5 h-5 text-[#A0A69F]"/></div></button>})}</div></section></div>
+ const normalized=useMemo(()=>normalizeForDisplay(props.projects,props.tasks),[props.projects,props.tasks]);const projects=normalized.projects,tasks=normalized.tasks;
+ const [selectedId,setSelectedId]=useState<string|null>(null);const [editingTask,setEditingTask]=useState<WorkTask|null>(null);
+ const selected=selectedId?projects.find(p=>p.id===selectedId):undefined;const childrenOf=(id:string)=>projects.filter(p=>p.parentProjectId===id);const roots=useMemo(()=>projects.filter(p=>!p.parentProjectId),[projects]);const children=selected?childrenOf(selected.id):[];
+ const addTask=()=>{if(!selected)return;const title=window.prompt(`新增「${selected.title}」的工作項目`);if(!title?.trim())return;props.onAddTask({workspaceId:'work',projectId:selected.id,projectName:selected.title,title:title.trim(),priority:'medium',status:'todo',deadline:'',estimatedHours:1,notes:'',tags:[],isUrgent:false,source:'user',createdBy:'user'});};
+ const addProject=()=>{const title=window.prompt('專案／客戶名稱');if(!title?.trim())return;props.onAddProject({workspaceId:'work',title:title.trim(),category:'一般專案',progress:0,priority:'medium',deadline:'',description:'',status:'planning',owner:'本人',tags:[],source:'user',createdBy:'user'});};
+ const updateTask=(task:WorkTask)=>{props.onUpdateTask(task);setEditingTask(null);};
+ if(selected){
+  if(children.length){const rootTasks=[...tasks.filter(t=>t.projectId===selected.id),...tasks.filter(t=>children.some(c=>c.id===t.projectId))];return <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5"><button onClick={()=>setSelectedId(null)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#385244]"><ArrowLeft className="w-4 h-4"/>返回客戶／體系</button><section className="rounded-2xl bg-white border border-[#E5E2DC] p-5"><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2 text-[#385244] text-xs font-semibold"><Building2 className="w-4 h-4"/>客戶／醫療體系</div><h2 className="mt-2 text-2xl font-bold text-[#2D322E]">{selected.title}</h2><p className="mt-1 text-xs text-[#7A837D]">客戶／體系 → 院所／據點 → 工作分類 → 具體任務 → 進度</p></div><button onClick={()=>props.onAskAgentAboutWork(`整理「${selected.title}」旗下各據點目前的工作與優先順序。`)} className="px-3 py-2 rounded-xl bg-[#385244] text-white text-xs font-semibold">問 Manager</button></div></section><ProjectPlanPanel project={selected} tasks={rootTasks}/><section className="rounded-2xl bg-[#FDFCFB] border border-[#E5E2DC] p-4 sm:p-5"><div className="flex items-center justify-between mb-4"><div><h3 className="font-bold text-sm text-[#2D322E]">旗下據點</h3><p className="text-[10px] text-[#8C938D] mt-1">共 {children.length} 個據點</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{children.map(site=>{const siteTasks=tasks.filter(t=>t.projectId===site.id);const done=siteTasks.filter(t=>t.status==='completed').length;const progress=siteTasks.length?Math.round(done/siteTasks.length*100):site.progress;return <button key={site.id} onClick={()=>setSelectedId(site.id)} className="text-left rounded-2xl border border-[#E5E2DC] bg-white p-4 hover:border-[#B9C8BC] hover:shadow-sm transition"><div className="flex items-start gap-3"><div className="w-10 h-10 rounded-xl bg-[#EBF1EC] text-[#385244] flex items-center justify-center"><Building2 className="w-5 h-5"/></div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="font-bold text-[#2D322E]">{site.title}</span><ChevronRight className="w-4 h-4 ml-auto text-[#A0A69F]"/></div><div className="text-[11px] text-[#7A837D] mt-1">{siteTasks.length} 項任務 · 完成 {progress}%</div></div></div></button>})}</div></section></div>}
+  return <><WorkProjectDetail project={selected} tasks={tasks} onBack={()=>setSelectedId(null)} onToggleTask={props.onToggleTask} onEditProject={props.onUpdateProject} onEditTask={setEditingTask} onAddTask={addTask}/>{editingTask&&<WorkTaskEditor task={editingTask} onSave={updateTask} onClose={()=>setEditingTask(null)}/>}</>;
+ }
+ return <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><div className="flex items-center gap-2"><Sparkles className="w-5 h-5 text-[#6B8A73]"/><h1 className="text-xl font-bold text-[#2D322E]">工作管理</h1></div><p className="text-xs text-[#7A837D] mt-1">客戶／體系 → 院所／據點 → 工作分類 → 具體任務 → 進度 → 規劃書</p></div><div className="flex gap-2"><button onClick={addProject} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#DDD8CE] bg-white text-[#385244] text-xs font-semibold"><Plus className="w-3.5 h-3.5"/>新增客戶</button><button onClick={()=>props.onAskAgentAboutWork('檢查目前所有客戶、院所與工作任務，告訴我最應優先處理的項目。')} className="px-3 py-2 rounded-xl bg-[#385244] text-white text-xs font-semibold">問 Manager</button></div></div><section className="rounded-2xl bg-[#FDFCFB] border border-[#E5E2DC] p-4 sm:p-5"><div className="flex items-center justify-between mb-4"><div><h2 className="font-bold text-sm text-[#2D322E]">客戶／體系</h2><p className="text-[10px] text-[#8C938D] mt-1">第一層只顯示客戶／體系；每個專案都有規劃書。</p></div><span className="text-[10px] text-[#8C938D]">{roots.length} 個客戶／體系</span></div><div className="space-y-2">{roots.map(project=>{const child=childrenOf(project.id);const direct=tasks.filter(t=>t.projectId===project.id);const nested=tasks.filter(t=>child.some(c=>c.id===t.projectId));return <button key={project.id} onClick={()=>setSelectedId(project.id)} className="w-full text-left rounded-2xl border border-[#E5E2DC] bg-white p-5 hover:border-[#B9C8BC] hover:shadow-sm transition"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-xl bg-[#EBF1EC] text-[#385244] flex items-center justify-center"><FolderKanban className="w-5 h-5"/></div><div className="min-w-0 flex-1"><div className="font-bold text-[#2D322E]">{project.title}</div><div className="text-[11px] text-[#7A837D] mt-1">{child.length} 個據點 · {direct.length+nested.length} 項任務 · 📋 有規劃書</div></div><ChevronRight className="w-5 h-5 text-[#A0A69F]"/></div></button>})}</div></section></div>;
 };
 export default WorkViewV2;
