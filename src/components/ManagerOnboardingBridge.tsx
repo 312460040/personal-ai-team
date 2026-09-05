@@ -73,11 +73,14 @@ function requestRealOnboarding(onDone: (snapshot: any) => void) {
 
 export function ManagerOnboardingBridge() {
   useEffect(() => {
-    let processed = false;
-    try {
-      processed = localStorage.getItem(PROCESSED_KEY) === '1';
-    } catch {}
-    if (processed) return;
+    const projects = readArray<any>(WORK_PROJECTS_KEY);
+    const tasks = readArray<any>(WORK_TASKS_KEY);
+    const hasRealWork = projects.some((project: any) => project?.source !== 'demo') || tasks.some((task: any) => task?.source !== 'demo');
+    const processed = localStorage.getItem(PROCESSED_KEY) === '1';
+
+    // A processed marker is not enough: if the browser data was cleared, the Work
+    // workspace must be reconstructed from the durable Manager onboarding snapshot.
+    if (processed && hasRealWork) return;
 
     const messages = readArray<any>(MESSAGE_KEY);
     const latest = [...messages].reverse().find(message => typeof message?.text === 'string' && message.text.includes('<!--AIT_MANAGER_ONBOARDING:'));
@@ -94,9 +97,6 @@ export function ManagerOnboardingBridge() {
       }
     }
 
-    // The normal chat fetch is intentionally rule-routed in the browser. Use XHR here
-    // so onboarding reaches the real Render API and can perform the actual Shared Data
-    // Store write even when the browser-side task-arrangement fallback is active.
     requestRealOnboarding((snapshot) => {
       try {
         applySnapshot(snapshot);
