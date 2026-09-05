@@ -3,7 +3,7 @@ import { useAppData } from '../context/AppDataContext';
 import { apiUrl } from '../services/apiBase';
 
 const OWNER_ID = 'personal-owner';
-const SEEN_KEY = 'ait_handoff_sync_v3';
+const SEEN_KEY = 'ait_handoff_sync_v4';
 const AGENTS = new Set(['work', 'study', 'research']);
 
 export default function AgentHandoffSync() {
@@ -29,51 +29,33 @@ export default function AgentHandoffSync() {
             const department = toAgent === 'work' ? '工作部' : toAgent === 'study' ? '課業部' : '研究部';
             const createResponse = await fetch(apiUrl('/api/persistence/organization/handoffs'), {
               method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID },
-              body: JSON.stringify({
-                fromAgent: 'manager', toAgent,
-                title: `${department}：${title}`,
-                reason: `Manager 分流結果：將此需求交由 ${agentName} 專責處理。`,
-                priority: 'medium',
-                payload: {
-                  sourceMessageId: message.id,
-                  sourceSessionId: (message as any).chatRoomId || (message as any).sessionId || 'room-public',
-                  intentType: message.intentType || null,
-                  sourceText: message.text.slice(0, 3000),
-                },
-              }),
+              body: JSON.stringify({ fromAgent: 'manager', toAgent, title: `${department}：${title}`, reason: `Manager 分流結果：將此需求交由 ${agentName} 專責處理。`, priority: 'medium', payload: { sourceMessageId: message.id, sourceSessionId: (message as any).chatRoomId || (message as any).sessionId || 'room-public', intentType: message.intentType || null, sourceText: message.text.slice(0, 3000) } }),
             });
             if (!createResponse.ok) throw new Error(`handoff create ${createResponse.status}`);
             const created = await createResponse.json();
             const handoffId = created?.handoff?.id;
             if (!handoffId) throw new Error('handoff id missing');
-            const executeResponse = await fetch(apiUrl(`/api/persistence/organization/handoffs/${encodeURIComponent(handoffId)}/execute`), {
-              method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID },
-            });
+            const executeResponse = await fetch(apiUrl(`/api/persistence/organization/handoffs/${encodeURIComponent(handoffId)}/execute`), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID } });
             if (!executeResponse.ok) throw new Error(`handoff execute ${executeResponse.status}`);
             const execution = await executeResponse.json();
-            const result = String(execution?.executionResult || '').trim();
-            const sessionId = String(message.chatRoomId || (message as any).sessionId || 'room-public');
-            if (result) {
-              await fetch(apiUrl('/api/persistence/conversations'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID },
-                body: JSON.stringify({
-                  sessionId,
-                  role: 'assistant',
-                  agentId: toAgent,
-                  content: `【${agentName} 回報 Manager】\n\n${result}`,
-                }),
-              });
-            }
-            return execution;
+            return { toAgent, agentName, handoffId, result: String(execution?.executionResult || '').trim() };
           }));
+          const successful = results.filter((r): r is PromiseFulfilledResult<{toAgent:string;agentName:string;handoffId:string;result:string}> => r.status === 'fulfilled' && Boolean(r.value.result));
+          for (const item of successful) {
+            const sessionId = String(message.chatRoomId || (message as any).sessionId || 'room-public');
+            await fetch(apiUrl('/api/persistence/conversations'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID }, body: JSON.stringify({ sessionId, role: 'assistant', agentId: item.toAgent, content: `【${item.agentName} 回報 Manager】\n\n${item.result}` }) });
+            const synthesis = await fetch(apiUrl(`/api/persistence/organization/handoffs/${encodeURIComponent(item.handoffId)}/manager-synthesis`), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID } });
+            if (synthesis.ok) {
+              const data = await synthesis.json();
+              const managerResult = String(data?.synthesis || '').trim();
+              if (managerResult) await fetch(apiUrl('/api/persistence/conversations'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': OWNER_ID }, body: JSON.stringify({ sessionId, role: 'assistant', agentId: 'manager', content: `【Manager 整合回覆】\n\n${managerResult}` }) });
+            }
+          }
           if (results.some(result => result.status === 'fulfilled')) {
             seen.current.add(message.id);
             try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(seen.current).slice(-200))); } catch {}
           }
-        } finally {
-          running.current.delete(message.id);
-        }
+        } finally { running.current.delete(message.id); }
       }
     };
     void sync();
