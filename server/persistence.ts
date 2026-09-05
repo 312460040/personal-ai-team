@@ -3,11 +3,22 @@ import './agentMemory';
 import organizationRouter from './organization';
 
 const router = Router();
-function configured(){return Boolean(process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY)}
-async function supabase(path:string,options:RequestInit={}){const base=process.env.SUPABASE_URL,key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!base||!key)return null;const response=await fetch(`${base}/rest/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:'return=representation',...(options.headers||{})}});if(!response.ok)throw new Error(`Supabase ${response.status}: ${await response.text()}`);return response.status===204?null:response.json()}
+function supabaseConfig(){
+  const base=String(process.env.SUPABASE_URL||'').replace(/\/$/,'');
+  const key=process.env.SUPABASE_SERVICE_ROLE_KEY||process.env.SUPABASE_ANON_KEY||process.env.SUPABASE_PUBLISHABLE_KEY||'';
+  return {base,key};
+}
+function configured(){const {base,key}=supabaseConfig();return Boolean(base&&key)}
+async function supabase(path:string,options:RequestInit={}){
+  const {base,key}=supabaseConfig();
+  if(!base||!key)return null;
+  const response=await fetch(`${base}/rest/v1/${path}`,{...options,headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json',Prefer:'return=representation',...(options.headers||{})}});
+  if(!response.ok)throw new Error(`Supabase ${response.status}: ${await response.text()}`);
+  return response.status===204?null:response.json()
+}
 async function ensureUser(ownerId:string){const rows=await supabase(`users?external_id=eq.${encodeURIComponent(ownerId)}&select=id`);if(Array.isArray(rows)&&rows[0]?.id)return rows[0].id as string;const created=await supabase('users',{method:'POST',body:JSON.stringify({external_id:ownerId,display_name:ownerId})});return Array.isArray(created)?created[0]?.id:null}
 function ownerId(req:Request){return String(req.header('x-owner-id')||'personal-owner')}
-router.get('/health',(_req,res)=>res.json({configured:configured(),provider:configured()?'supabase-postgresql':'not-configured'}));
+router.get('/health',async(_req,res)=>{if(!configured())return res.status(503).json({configured:false,provider:'not-configured'});try{await supabase('users?select=id&limit=1');const {base}=supabaseConfig();res.json({configured:true,connected:true,provider:'supabase-postgresql',url:base})}catch(error){res.status(500).json({configured:true,connected:false,provider:'supabase-postgresql',error:error instanceof Error?error.message:String(error)})}});
 router.use(async(req,res,next)=>{if(!configured())return res.status(503).json({error:'Persistence database is not configured'});try{const userId=await ensureUser(ownerId(req));if(!userId)return res.status(500).json({error:'Unable to resolve owner'});res.locals.userId=userId;next()}catch(error){res.status(500).json({error:error instanceof Error?error.message:String(error)})}});
 const VIEWABLE_TABLES=['users','projects','tasks','conversations','work_records','memories','focus_sessions','calendar_events','diagnosis_records','adaptive_proposals','study_subjects','today_blocks','agent_handoffs','agent_messages'] as const;
 type ViewableTable=typeof VIEWABLE_TABLES[number];
