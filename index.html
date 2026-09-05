@@ -12,10 +12,47 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+      html, body { margin: 0; min-height: 100%; }
+      body { background: #F8F7F4; }
+      #ait-boot-fallback { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #2D322E; }
+      #ait-boot-card { width: min(520px, 100%); padding: 28px; border: 1px solid #E5E2DC; border-radius: 20px; background: #FDFCFB; box-shadow: 0 12px 40px rgba(45,50,46,.08); }
+      #ait-boot-card h1 { margin: 0 0 8px; font-size: 20px; }
+      #ait-boot-card p { margin: 8px 0; line-height: 1.6; color: #68716A; }
+      #ait-boot-error { display: none; margin-top: 16px; padding: 12px; border-radius: 12px; background: #FAF0E6; color: #7A4022; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    </style>
   </head>
   <body class="bg-[#F8F7F4] text-[#2D322E] font-sans antialiased selection:bg-[#6E8B74]/20 selection:text-[#2D4835]">
-    <div id="root"></div>
+    <div id="root">
+      <div id="ait-boot-fallback">
+        <div id="ait-boot-card">
+          <h1>Personal AI Team</h1>
+          <p>正在載入 AI Team 工作區…</p>
+          <div id="ait-boot-error"></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      window.__aitBootFail = function(message) {
+        var box = document.getElementById('ait-boot-error');
+        if (!box) return;
+        box.style.display = 'block';
+        box.textContent = '前端載入失敗：\\n' + String(message || '未知錯誤') + '\\n\\n請把這段錯誤訊息截圖給我，我可以直接繼續修。';
+      };
+      window.addEventListener('error', function(event) {
+        if (event && event.error) window.__aitBootFail(event.error.stack || event.error.message || event.message);
+      });
+      window.addEventListener('unhandledrejection', function(event) {
+        var reason = event && event.reason;
+        window.__aitBootFail(reason && (reason.stack || reason.message) || String(reason || 'Unhandled promise rejection'));
+      });
+      window.setTimeout(function() {
+        var root = document.getElementById('root');
+        if (root && !root.querySelector('[data-ait-app="true"]')) {
+          window.__aitBootFail('React 應用程式在 8 秒內沒有完成掛載。可能是 JavaScript 資源未載入，或啟動時發生錯誤。');
+        }
+      }, 8000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
