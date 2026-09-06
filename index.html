@@ -33,17 +33,6 @@
       </div>
     </div>
     <script>
-      // Prevent accidental browser form submission from UI buttons that are
-      // intended to be interactive controls. Explicit type="submit" buttons
-      // remain untouched so chat/forms can still submit normally.
-      document.addEventListener('click', function(event) {
-        var target = event.target;
-        var button = target && target.closest ? target.closest('button') : null;
-        if (!button) return;
-        var type = (button.getAttribute('type') || 'submit').toLowerCase();
-        if (type !== 'submit') event.preventDefault();
-      }, true);
-
       window.__aitBootFail = function(message) {
         var box = document.getElementById('ait-boot-error');
         if (!box) return;
@@ -64,6 +53,6 @@
         }
       }, 8000);
     </script>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
