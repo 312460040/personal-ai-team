@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { WorkProject, WorkTask, StudySubject, StudyTask, TodayTimeBlock, DiscussionRecord, Person, ChatMessage, AgentActivityLog, StructuredTimeBlock } from '../types';
 import { DEMO_WORK_PROJECTS, DEMO_WORK_TASKS, DEMO_STUDY_SUBJECTS, DEMO_STUDY_TASKS, DEMO_TODAY_BLOCKS, INITIAL_USER_WORK_PROJECTS, INITIAL_USER_WORK_TASKS, INITIAL_USER_STUDY_SUBJECTS, INITIAL_USER_STUDY_TASKS, INITIAL_USER_TODAY_BLOCKS } from '../data/mockData';
+import { apiUrl } from '../services/apiBase';
 
 export const INITIAL_PEOPLE: Person[] = [
   { id: 'p-1', name: '本人', role: '核心負責人 / 使用者', source: 'user', createdBy: 'user' },
@@ -17,7 +18,7 @@ interface AppDataContextType {
   workProjects: WorkProject[]; workTasks: WorkTask[]; studySubjects: StudySubject[]; studyTasks: StudyTask[]; discussionRecords: DiscussionRecord[]; people: Person[]; todayBlocks: TodayTimeBlock[]; messages: ChatMessage[]; activityLogs: AgentActivityLog[]; isLoading: boolean;
   addWorkTask: (task: Omit<WorkTask, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void; updateWorkTask: (task: WorkTask) => void; deleteWorkTask: (taskId: string) => void; toggleWorkTask: (taskId: string) => void;
   addWorkProject: (project: Omit<WorkProject, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void; updateWorkProject: (project: WorkProject) => void; deleteWorkProject: (projectId: string) => void;
-  addStudyTask: (task: Omit<StudyTask, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void; updateStudyTask: (task: StudyTask) => void; deleteStudyTask: (taskId: string) => void; toggleStudyTask: (taskId: string) => void;
+  addStudyTask: (task: Omit<StudyTask, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'system' | 'user' }) => void; updateStudyTask: (task: StudyTask) => void; deleteStudyTask: (taskId: string) => void; toggleStudyTask: (taskId: string) => void;
   addStudySubject: (subject: Omit<StudySubject, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void; updateStudySubject: (subject: StudySubject) => void; deleteStudySubject: (subjectId: string) => void;
   addTodayBlock: (block: Omit<TodayTimeBlock, 'id' | 'source' | 'createdBy'> & { source?: 'user' | 'demo'; createdBy?: 'user' | 'system' }) => void; updateTodayBlock: (block: TodayTimeBlock) => void; toggleTodayBlock: (blockId: string) => void; applyScheduleToToday: (blocks: StructuredTimeBlock[]) => void;
   addDiscussionRecord: (rec: Omit<DiscussionRecord, 'id' | 'source' | 'createdBy'>) => void; deleteDiscussionRecord: (id: string) => void; addPerson: (person: Omit<Person, 'id' | 'source' | 'createdBy'>) => void;
@@ -71,7 +72,7 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setMessages(prev => [...prev, userMsg]);
     setIsLoading(true);
     try {
-      const response = await fetch('/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, context: { currentContext, workProjects, workTasks, studySubjects, studyTasks, discussionRecords, people, todayBlocks } }) });
+      const response = await fetch(apiUrl('/api/agent/chat'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, context: { currentContext, workProjects, workTasks, studySubjects, studyTasks, discussionRecords, people, todayBlocks } }) });
       if (!response.ok) throw new Error(`Server returned status ${response.status}`);
       const data = await response.json();
       if (data.createdStudyTask) addStudyTask(data.createdStudyTask); else if (data.createdWorkTask) addWorkTask(data.createdWorkTask); else if (data.createdTaskPayload) addWorkTask(data.createdTaskPayload);
@@ -84,6 +85,6 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setMessages(prev => [...prev, { id: `manager-err-${Date.now()}`, sender: 'manager', text: '### ⚠️ AI 團隊通訊服務提醒\n目前伺服器連線繁忙或發生短暫中斷。請確認資料庫狀態後再次嘗試。', timestamp: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }), delegatedAgents: ['work', 'study'] }]);
     } finally { setIsLoading(false); }
   };
-  return <AppDataContext.Provider value={{ currentContext, setCurrentContext, workProjects, workTasks, studySubjects, studyTasks, discussionRecords, people, todayBlocks, messages, activityLogs, isLoading, addWorkTask, updateWorkTask, deleteWorkTask, toggleWorkTask, addWorkProject, updateWorkProject, deleteWorkProject, addStudyTask, updateStudyTask, deleteStudyTask, toggleStudyTask, addStudySubject, updateStudySubject, deleteStudySubject, addTodayBlock, updateTodayBlock, toggleTodayBlock, applyScheduleToToday, addDiscussionRecord, deleteDiscussionRecord, addPerson, sendMessage, clearDemoData, loadDemoData, clearAllData }}>{children}</AppDataContext.Provider>;
+  return <AppDataContext.Provider value={{ currentContext, setCurrentContext, workProjects, workTasks, studySubjects, studyTasks, discussionRecords, people, todayBlocks, messages, activityLogs, isLoading, addWorkTask, updateWorkTask, deleteWorkTask, toggleWorkTask, addWorkProject, updateWorkProject, deleteWorkProject, toggleStudyTask, addStudySubject, updateStudySubject, deleteStudySubject, addTodayBlock, updateTodayBlock, toggleTodayBlock, applyScheduleToToday, addDiscussionRecord, deleteDiscussionRecord, addPerson, sendMessage, clearDemoData, loadDemoData, clearAllData }}>{children}</AppDataContext.Provider>;
 };
 export const useAppData = () => { const context = useContext(AppDataContext); if (!context) throw new Error('useAppData must be used within AppDataProvider'); return context; };
