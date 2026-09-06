@@ -26,7 +26,13 @@ const ROOM_STORAGE_KEY = 'ait_agent_chat_rooms_v2';
 const loadRooms = (): Record<string, ChatMessage[]> => { try { return JSON.parse(localStorage.getItem(ROOM_STORAGE_KEY) || '{}'); } catch { return {}; } };
 const loadPeople = (): Person[] => { try { const v = JSON.parse(localStorage.getItem('ait_people_v2') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 const agentLabel = (id: string) => id === 'work' ? 'Work Agent' : id === 'study' ? 'Study Agent' : id === 'research' ? 'Research Agent' : 'Manager Agent';
-const auditSummary = (audit?: AgentExecutionAudit) => audit ? `${audit.executionMode === 'parallel_specialists_then_manager' ? 'Work + Study → Manager' : audit.finalAgent === 'manager' ? 'Manager' : agentLabel(audit.finalAgent)}｜寫入權限 ${audit.writeAuthorized ? '允許' : '未授權'}｜AI 提案 ${audit.requested}｜接受 ${audit.accepted}｜攔截 ${audit.rejected}` : '';
+const auditSummary = (audit?: AgentExecutionAudit) => {
+  if (!audit) return '';
+  const requested = Number((audit as any).requested ?? (audit as any).requestedTools ?? 0);
+  const accepted = Number((audit as any).accepted ?? (audit as any).successfulTools ?? 0);
+  const rejected = Number((audit as any).rejected ?? (audit as any).failedTools ?? 0);
+  return `${audit.executionMode === 'parallel_specialists_then_manager' ? 'Work + Study → Manager' : audit.finalAgent === 'manager' ? 'Manager' : agentLabel(audit.finalAgent)}｜寫入權限 ${audit.writeAuthorized ? '允許' : '未授權'}｜AI 提案 ${requested}｜接受 ${accepted}｜攔截 ${rejected}`;
+};
 const messageKey = (m: ChatMessage) => `${m.sender === 'user' ? 'user' : 'assistant'}|${m.agentId || ''}|${m.text}`;
 const timeNow = () => new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
 const fromDb = (row: any): ChatMessage => ({ id: `db-conversation-${row.id}`, sender: row.role === 'user' ? 'user' : 'agent', agentId: row.agent_id || undefined, agentName: row.agent_id === 'manager' ? 'Manager' : row.agent_id === 'work' ? 'Work Agent' : row.agent_id === 'study' ? 'Study Agent' : row.agent_id === 'research' ? 'Research Agent' : undefined, agentRole: row.agent_id === 'manager' ? 'AI 總管' : row.agent_id === 'work' ? '工作管理員' : row.agent_id === 'study' ? '課業管理員' : row.agent_id === 'research' ? '調研分析員' : undefined, text: String(row.content || ''), timestamp: row.created_at ? new Date(row.created_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }) : '' });
@@ -78,7 +84,12 @@ export const AiTeamChat: React.FC<AiTeamChatProps> = ({ messages, onSendMessage,
     return () => window.clearInterval(timer);
   }, [roomKey]);
   const append = (items: ChatMessage[]) => setRoomMessages(prev => { const next = { ...prev, [roomKey]: [...(prev[roomKey] || []), ...items] }; try { localStorage.setItem(ROOM_STORAGE_KEY, JSON.stringify(next)); } catch {} return next; });
-  const persist = async (m: ChatMessage, role: 'user' | 'assistant') => { try { await fetch(apiUrl('/api/persistence/conversations'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ sessionId: roomKey, role, agentId: role === 'assistant' ? (m.agentId || selectedAgent.id) : null, content: m.text }) }); } catch {} };
+  const persist = async (m: ChatMessage, role: 'user' | 'assistant') => {
+    try {
+      const response = await fetch(apiUrl('/api/persistence/conversations'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Id': 'personal-owner' }, body: JSON.stringify({ sessionId: roomKey, role, agentId: role === 'assistant' ? (m.agentId || selectedAgent.id) : null, content: m.text }) });
+      return response.ok;
+    } catch { return false; }
+  };
   const mentionedPerson = (text: string) => { const m = text.match(/(?:^|\s)@([^\s@]+)/); if (!m) return undefined; const name = m[1].replace(/[，。！？、,:：;；]+$/, ''); const pool = people.length ? people : loadPeople(); return pool.find(p => p.name === name); };
   const applyActions = (actions: any[], person?: Person) => {
     const ids: string[] = [];
@@ -96,10 +107,17 @@ export const AiTeamChat: React.FC<AiTeamChatProps> = ({ messages, onSendMessage,
   };
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault(); const prompt = inputText.trim(); if (!prompt || busy) return; setInputText('');
-    const person = mentionedPerson(prompt); const user: ChatMessage = { id: `direct-user-${Date.now()}`, sender: 'user', text: prompt, timestamp: timeNow(), chatRoomId: roomKey }; append([user]); setLoading(true); void persist(user, 'user');
+    const person = mentionedPerson(prompt); const user: ChatMessage = { id: `direct-user-${Date.now()}`, sender: 'user', text: prompt, timestamp: timeNow(), chatRoomId: roomKey }; append([user]);
+    // 先完成本地＋資料庫保存，再呼叫 AI。即使 AI 失敗，Owner 的原始訊息也不會消失。
+    await persist(user, 'user');
+    setLoading(true);
     try {
       const response = await fetch(apiUrl('/api/agent/direct/chat'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: prompt, agentId: selectedAgent.id, agentName: selectedAgent.name, agentRole: selectedAgent.role, history: [...messages, ...(roomMessages[roomKey] || []), user], context: { workProjects, workTasks, studySubjects, studyTasks, people: people.length ? people : loadPeople(), mentionedAssignee: person?.name || null, currentContext: { workspaceId: selectedAgent.id === 'study' ? 'study' : selectedAgent.id === 'work' ? 'work' : 'manager', chatRoomId: roomKey } } }) });
-      if (!response.ok) throw new Error(`AI 員工回應 ${response.status}`);
+      if (!response.ok) {
+        let detail = `AI 員工回應 ${response.status}`;
+        try { const payload = await response.json(); if (payload?.error) detail = String(payload.error); } catch {}
+        throw new Error(detail);
+      }
       const data = await response.json(); const actions = Array.isArray(data.actions) ? data.actions : []; const ids = applyActions(actions, person);
       const assignment = person ? `\n\n> 👤 **已指派：${person.name}**${person.role ? `（${person.role}）` : ''}` : '';
       const activityLogs: AgentActivityLog[] = [{ id: `act-${Date.now()}`, timestamp: new Date().toISOString(), stepIndex: 1, fromAgent: (data.agentId || selectedAgent.id) as AgentId, action: actions.length ? '分析 → 寫入 Task' : '分析需求', summary: actions.length ? `已套用 ${ids.length} 筆任務${person ? `，指派給 ${person.name}` : ''}` : '已完成 AI 分析', status: 'completed', durationMs: 0 }];
